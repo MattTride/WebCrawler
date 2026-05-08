@@ -1,0 +1,9 @@
+#!/bin/zsh
+APP_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
+cd "$APP_DIR"
+
+if [ -x /usr/bin/python3 ]; then
+  exec /usr/bin/python3 crawler_app.py
+else
+  exec python3 crawler_app.py
+fi
