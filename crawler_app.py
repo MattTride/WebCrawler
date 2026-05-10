@@ -18,8 +18,15 @@ import tkinter as tk
 APP_NAME = "网页爬虫小程序"
 MAX_BYTES = 1_500_000
 TIMEOUT = 15
+DOWNLOAD_TIMEOUT = 45
 SKIP_TAGS = {"script", "style", "noscript", "template", "svg", "canvas"}
 HEADINGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
+VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov", ".m4v", ".avi", ".mkv", ".ogv", ".3gp", ".flv"}
+VIDEO_META_KEYS = {
+    "og:video", "og:video:url", "og:video:secure_url", "og:video:iframe",
+    "twitter:player:stream",
+}
+IMAGE_META_KEYS = {"og:image", "og:image:url", "og:image:secure_url", "twitter:image", "twitter:image:src"}
 
 
 def clean(text: str) -> str:
@@ -54,6 +61,33 @@ def dedupe(items: list[dict[str, str]], key: str) -> list[dict[str, str]]:
     return out
 
 
+def url_suffix(url: str) -> str:
+    path = urllib.parse.urlparse(url).path
+    return Path(urllib.parse.unquote(path)).suffix.lower()
+
+
+def looks_like_video(url: str) -> bool:
+    return url_suffix(url) in VIDEO_EXTENSIONS
+
+
+def first_srcset_url(value: str) -> str:
+    if not value:
+        return ""
+    first = value.split(",", 1)[0].strip()
+    return first.split(" ", 1)[0].strip()
+
+
+def safe_filename_from_url(url: str, fallback: str = "media") -> str:
+    parsed = urllib.parse.urlparse(url)
+    name = Path(urllib.parse.unquote(parsed.path)).name or fallback
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", name).strip(" .")
+    if not name:
+        name = fallback
+    if "." not in name and looks_like_video(url):
+        name += url_suffix(url)
+    return name[:120]
+
+
 @dataclass
 class CrawlResult:
     requested_url: str
@@ -67,6 +101,7 @@ class CrawlResult:
     headings: list[dict[str, str]]
     links: list[dict[str, str]]
     images: list[dict[str, str]]
+    videos: list[dict[str, str]]
     text: str
     html_preview: str
     bytes_read: int
@@ -83,8 +118,9 @@ class PageParser(HTMLParser):
         self.base_url = base_url
         self.title_parts, self.text_parts = [], []
         self.description = ""
-        self.links, self.images, self.headings = [], [], []
+        self.links, self.images, self.videos, self.headings = [], [], [], []
         self.in_title = False
+        self.in_video = False
         self.skip_depth = 0
         self.current_link = None
         self.current_heading = None
@@ -97,19 +133,47 @@ class PageParser(HTMLParser):
             return
         if tag == "title":
             self.in_title = True
-        elif tag == "meta" and not self.description:
+        elif tag == "meta":
             name = attrs.get("name", "").lower()
             prop = attrs.get("property", "").lower()
-            if name == "description" or prop == "og:description":
+            content = attrs.get("content", "").strip()
+            if not self.description and (name == "description" or prop == "og:description"):
                 self.description = clean(attrs.get("content", ""))
+            if content and (name in IMAGE_META_KEYS or prop in IMAGE_META_KEYS):
+                self.images.append({"alt": prop or name or "页面图片", "src": urllib.parse.urljoin(self.base_url, content)})
+            if content and (name in VIDEO_META_KEYS or prop in VIDEO_META_KEYS):
+                self.add_video(content, prop or name or "视频")
         elif tag == "a":
             href = attrs.get("href", "").strip()
             if href and not href.lower().startswith(("javascript:", "mailto:", "tel:")):
-                self.current_link = {"url": urllib.parse.urljoin(self.base_url, href), "parts": []}
+                url = urllib.parse.urljoin(self.base_url, href)
+                self.current_link = {"url": url, "parts": []}
+                if looks_like_video(url):
+                    self.add_video(url, "视频链接")
         elif tag == "img":
-            src = attrs.get("src", "").strip() or attrs.get("data-src", "").strip()
+            src = (
+                attrs.get("src", "").strip()
+                or attrs.get("data-src", "").strip()
+                or attrs.get("data-original", "").strip()
+                or attrs.get("data-lazy-src", "").strip()
+                or first_srcset_url(attrs.get("srcset", ""))
+                or first_srcset_url(attrs.get("data-srcset", ""))
+            )
             if src:
                 self.images.append({"alt": clean(attrs.get("alt", "")), "src": urllib.parse.urljoin(self.base_url, src)})
+        elif tag == "video":
+            self.in_video = True
+            src = attrs.get("src", "").strip()
+            if src:
+                self.add_video(src, clean(attrs.get("title", "")) or "视频")
+            poster = attrs.get("poster", "").strip()
+            if poster:
+                self.images.append({"alt": "视频封面", "src": urllib.parse.urljoin(self.base_url, poster)})
+        elif tag == "source":
+            src = attrs.get("src", "").strip()
+            media_type = attrs.get("type", "").lower()
+            if src and (self.in_video or media_type.startswith("video/") or looks_like_video(src)):
+                self.add_video(src, media_type or "视频")
         elif tag in HEADINGS:
             self.current_heading = {"level": tag.upper(), "parts": []}
 
@@ -136,11 +200,18 @@ class PageParser(HTMLParser):
             text = clean(" ".join(self.current_link["parts"])) or "无文字链接"
             self.links.append({"text": text[:240], "url": self.current_link["url"]})
             self.current_link = None
+        elif tag == "video":
+            self.in_video = False
         elif tag in HEADINGS and self.current_heading:
             text = clean(" ".join(self.current_heading["parts"]))
             if text:
                 self.headings.append({"level": self.current_heading["level"], "text": text[:240]})
             self.current_heading = None
+
+    def add_video(self, src: str, label: str = "视频"):
+        url = urllib.parse.urljoin(self.base_url, src)
+        text = clean(label) or Path(urllib.parse.urlparse(url).path).name or "视频"
+        self.videos.append({"text": text[:240], "url": url})
 
     @property
     def title(self) -> str:
@@ -191,12 +262,30 @@ def fetch_url(url: str) -> CrawlResult:
         headings=parser.headings[:80],
         links=dedupe(parser.links, "url")[:500],
         images=dedupe(parser.images, "src")[:300],
+        videos=dedupe(parser.videos, "url")[:300],
         text=parser.body_text,
         html_preview=html[:30_000],
         bytes_read=len(raw),
         truncated=truncated,
         fetched_at=time.strftime("%Y-%m-%d %H:%M:%S"),
     )
+
+
+def download_file(url: str, path: Path) -> int:
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 MiniCrawler/1.0",
+        "Accept": "*/*",
+    })
+    written = 0
+    with urllib.request.urlopen(req, timeout=DOWNLOAD_TIMEOUT) as resp:
+        with path.open("wb") as file:
+            while True:
+                chunk = resp.read(128 * 1024)
+                if not chunk:
+                    break
+                file.write(chunk)
+                written += len(chunk)
+    return written
 
 
 class CrawlerApp(tk.Frame):
@@ -211,9 +300,11 @@ class CrawlerApp(tk.Frame):
         super().__init__(root, bg=self.C["bg"])
         self.root, self.q, self.result = root, queue.Queue(), None
         self.pages, self.tabs, self.lists = {}, {}, {}
-        self.link_items, self.image_items, self.placeholder = [], [], True
+        self.link_items, self.image_items, self.video_items, self.placeholder = [], [], [], True
         self.status = tk.StringVar(value="等待 URL")
-        self.metrics = {k: tk.StringVar(value=v) for k, v in {"链接": "0", "图片": "0", "标题": "0", "状态": "未抓取"}.items()}
+        self.metrics = {k: tk.StringVar(value=v) for k, v in {
+            "链接": "0", "图片": "0", "视频": "0", "标题": "0", "状态": "未抓取",
+        }.items()}
         root.title(APP_NAME)
         root.geometry("1180x780")
         root.minsize(960, 660)
@@ -251,10 +342,10 @@ class CrawlerApp(tk.Frame):
         note = tk.Frame(side, bg=self.C["panel"], highlightbackground=self.C["line"], highlightthickness=1)
         note.pack(fill="x", padx=20, pady=(30, 18))
         self.label(note, "当前任务", size=12, weight="bold", bg=self.C["panel"]).pack(anchor="w", padx=14, pady=(12, 3))
-        self.label(note, "输入 URL 后，我会提取标题、正文、链接、图片和 HTML 预览。", size=12, fg=self.C["muted"], bg=self.C["panel"]).pack(fill="x", padx=14, pady=(0, 14))
+        self.label(note, "输入 URL 后，我会提取标题、正文、链接、图片、视频和 HTML 预览。", size=12, fg=self.C["muted"], bg=self.C["panel"]).pack(fill="x", padx=14, pady=(0, 14))
         grid = tk.Frame(side, bg=self.C["side"])
         grid.pack(fill="x", padx=20)
-        for i, name in enumerate(("链接", "图片", "标题", "状态")):
+        for i, name in enumerate(("链接", "图片", "视频", "标题", "状态")):
             card = tk.Frame(grid, bg=self.C["panel"], highlightbackground=self.C["line"], highlightthickness=1)
             card.grid(row=i // 2, column=i % 2, sticky="nsew", padx=4, pady=4)
             grid.grid_columnconfigure(i % 2, weight=1)
@@ -267,7 +358,7 @@ class CrawlerApp(tk.Frame):
         left = tk.Frame(bar, bg=self.C["bg"])
         left.pack(side="left", fill="x", expand=True)
         self.label(left, APP_NAME, size=25, weight="bold").pack(anchor="w")
-        self.label(left, "把一个网页变成结构化信息：摘要、正文、链接、图片，一次看清。", size=13, fg=self.C["muted"]).pack(anchor="w", pady=(4, 0))
+        self.label(left, "把一个网页变成结构化信息：摘要、正文、链接、图片、视频，一次看清。", size=13, fg=self.C["muted"]).pack(anchor="w", pady=(4, 0))
         badge = tk.Frame(bar, bg=self.C["panel"], highlightbackground=self.C["line"], highlightthickness=1)
         badge.pack(side="right")
         self.label(badge, var=self.status, size=12, weight="bold", fg=self.C["green"], bg=self.C["panel"]).pack(padx=14, pady=8)
@@ -281,7 +372,7 @@ class CrawlerApp(tk.Frame):
         self.label(head, "结果会出现在这里", size=12, fg=self.C["muted"], bg=self.C["panel"]).pack(side="left", padx=(10, 0))
         tabs = tk.Frame(panel, bg=self.C["panel"])
         tabs.pack(fill="x", padx=14, pady=(0, 10))
-        for name in ("概览", "正文", "链接", "图片", "HTML预览"):
+        for name in ("概览", "正文", "链接", "图片", "视频", "HTML预览"):
             btn = tk.Button(tabs, text=name, command=lambda n=name: self.show(n), relief="flat", bd=0, padx=16, pady=9,
                             bg=self.C["alt"], fg=self.C["muted"], activebackground=self.C["accent_soft"],
                             font=("Helvetica", 13, "bold"), cursor="hand2")
@@ -293,6 +384,7 @@ class CrawlerApp(tk.Frame):
         self.body = self.text_page("正文")
         self.list_page("链接")
         self.list_page("图片")
+        self.list_page("视频")
         self.html = self.text_page("HTML预览")
         self.set_text(self.summary, "准备好了。\n\n把网页 URL 粘贴到底部的大输入框里，然后点击“抓取网页”。")
         self.show("概览")
@@ -349,6 +441,8 @@ class CrawlerApp(tk.Frame):
         tools.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         self.button(tools, "复制选中地址", lambda n=name: self.copy_url(n)).pack(side="left")
         self.button(tools, "打开选中地址", lambda n=name: self.open_url(n)).pack(side="left", padx=(8, 0))
+        if name in {"图片", "视频"}:
+            self.button(tools, "下载选中资源", lambda n=name: self.download_selected(n)).pack(side="left", padx=(8, 0))
         box = tk.Listbox(frame, selectmode=tk.BROWSE, relief="flat", bd=0, font=("Helvetica", 14),
                          bg=self.C["alt"], fg=self.C["ink"], selectbackground=self.C["accent_soft"])
         scroll = tk.Scrollbar(frame, orient="vertical", command=box.yview)
@@ -405,6 +499,7 @@ class CrawlerApp(tk.Frame):
         self.set_text(self.html, "")
         self.fill_list("链接", [])
         self.fill_list("图片", [])
+        self.fill_list("视频", [])
         self.set_busy(True, "正在抓取")
         self.show("概览")
         threading.Thread(target=self.worker, args=(url,), daemon=True).start()
@@ -418,7 +513,16 @@ class CrawlerApp(tk.Frame):
     def poll(self):
         try:
             kind, payload = self.q.get_nowait()
-            self.show_result(payload) if kind == "ok" else self.show_error(payload)
+            if kind == "ok":
+                self.show_result(payload)
+            elif kind == "download_ok":
+                self.status.set("下载完成")
+                messagebox.showinfo(APP_NAME, f"资源已保存：\n{payload}")
+            elif kind == "download_err":
+                self.status.set("下载失败")
+                messagebox.showerror(APP_NAME, f"下载失败：\n{payload}")
+            else:
+                self.show_error(payload)
         except queue.Empty:
             pass
         self.after(100, self.poll)
@@ -430,6 +534,7 @@ class CrawlerApp(tk.Frame):
         self.metrics["状态"].set(str(result.status_code or "完成"))
         self.metrics["链接"].set(str(len(result.links)))
         self.metrics["图片"].set(str(len(result.images)))
+        self.metrics["视频"].set(str(len(result.videos)))
         self.metrics["标题"].set(str(len(result.headings)))
         headings = "\n".join(f"{h['level']}  {h['text']}" for h in result.headings[:30]) or "未发现标题结构"
         status = f"{result.status_code} {result.reason}".strip() if result.status_code else "无状态码"
@@ -441,6 +546,9 @@ class CrawlerApp(tk.Frame):
 编码：{result.encoding}
 读取大小：{result.bytes_read:,} bytes
 内容被截断：{"是" if result.truncated else "否"}
+链接数量：{len(result.links)}
+图片数量：{len(result.images)}
+视频数量：{len(result.videos)}
 
 页面标题：
 {result.title}
@@ -455,6 +563,7 @@ class CrawlerApp(tk.Frame):
         self.set_text(self.html, result.html_preview)
         self.fill_list("链接", result.links)
         self.fill_list("图片", result.images)
+        self.fill_list("视频", result.videos)
         self.show("概览")
 
     def show_error(self, message: str):
@@ -477,7 +586,8 @@ class CrawlerApp(tk.Frame):
         self.set_text(self.html, "")
         self.fill_list("链接", [])
         self.fill_list("图片", [])
-        for key, value in {"链接": "0", "图片": "0", "标题": "0", "状态": "未抓取"}.items():
+        self.fill_list("视频", [])
+        for key, value in {"链接": "0", "图片": "0", "视频": "0", "标题": "0", "状态": "未抓取"}.items():
             self.metrics[key].set(value)
         self.status.set("等待 URL")
         self.show("概览")
@@ -491,12 +601,22 @@ class CrawlerApp(tk.Frame):
         value = clean(value)
         return value if len(value) <= limit else f"{value[:limit - 3]}..."
 
+    def records_for(self, name):
+        if name == "链接":
+            return self.link_items
+        if name == "图片":
+            return self.image_items
+        return self.video_items
+
     def fill_list(self, name, records):
-        target = self.link_items if name == "链接" else self.image_items
+        target = self.records_for(name)
         target[:] = records
         box = self.lists[name]
         box.delete(0, tk.END)
-        label_key, url_key = ("text", "url") if name == "链接" else ("alt", "src")
+        if name == "图片":
+            label_key, url_key = "alt", "src"
+        else:
+            label_key, url_key = "text", "url"
         for i, item in enumerate(records, 1):
             box.insert(tk.END, f"{i}. {self.shorten(item.get(label_key) or '无说明', 62)}    {self.shorten(item.get(url_key, ''), 116)}")
 
@@ -504,7 +624,7 @@ class CrawlerApp(tk.Frame):
         box = self.lists[name]
         if not box.curselection():
             return None
-        records = self.link_items if name == "链接" else self.image_items
+        records = self.records_for(name)
         item = records[box.curselection()[0]]
         return item.get("url") or item.get("src")
 
@@ -524,6 +644,31 @@ class CrawlerApp(tk.Frame):
             return
         webbrowser.open(url)
         self.status.set("已打开地址")
+
+    def download_selected(self, name):
+        url = self.selected_url(name)
+        if not url:
+            messagebox.showinfo(APP_NAME, "请先选择一条记录。")
+            return
+        downloads = Path.home() / "Downloads"
+        initialdir = downloads if downloads.exists() else Path.cwd()
+        path = filedialog.asksaveasfilename(
+            title="保存资源",
+            initialdir=str(initialdir),
+            initialfile=safe_filename_from_url(url, "media"),
+            filetypes=(("所有文件", "*.*"),),
+        )
+        if not path:
+            return
+        self.status.set("正在下载")
+        threading.Thread(target=self.download_worker, args=(url, Path(path)), daemon=True).start()
+
+    def download_worker(self, url, path):
+        try:
+            download_file(url, path)
+            self.q.put(("download_ok", str(path)))
+        except Exception as err:
+            self.q.put(("download_err", str(err)))
 
     def save_results(self):
         if self.result is None:
