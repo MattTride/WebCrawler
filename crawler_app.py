@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import base64
+import io
 import json
 import queue
 import re
+import subprocess
+import tempfile
 import threading
 import time
 import urllib.error
@@ -17,8 +21,10 @@ import tkinter as tk
 
 APP_NAME = "网页爬虫小程序"
 MAX_BYTES = 1_500_000
+PREVIEW_MAX_BYTES = 800_000
 TIMEOUT = 15
 DOWNLOAD_TIMEOUT = 45
+PREVIEW_TIMEOUT = 8
 SKIP_TAGS = {"script", "style", "noscript", "template", "svg", "canvas"}
 HEADINGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov", ".m4v", ".avi", ".mkv", ".ogv", ".3gp", ".flv"}
@@ -288,6 +294,15 @@ def download_file(url: str, path: Path) -> int:
     return written
 
 
+def fetch_preview_bytes(url: str) -> bytes:
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 MiniCrawler/1.0",
+        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+    })
+    with urllib.request.urlopen(req, timeout=PREVIEW_TIMEOUT) as resp:
+        return resp.read(PREVIEW_MAX_BYTES + 1)[:PREVIEW_MAX_BYTES]
+
+
 class CrawlerApp(tk.Frame):
     C = {
         "bg": "#f4eee6", "panel": "#fffaf3", "alt": "#f9f1e8", "side": "#eadfd1",
@@ -301,6 +316,7 @@ class CrawlerApp(tk.Frame):
         self.root, self.q, self.result = root, queue.Queue(), None
         self.pages, self.tabs, self.lists = {}, {}, {}
         self.link_items, self.image_items, self.video_items, self.placeholder = [], [], [], True
+        self.preview_slots, self.preview_photos, self.preview_generation = {}, [], 0
         self.status = tk.StringVar(value="等待 URL")
         self.metrics = {k: tk.StringVar(value=v) for k, v in {
             "链接": "0", "图片": "0", "视频": "0", "标题": "0", "状态": "未抓取",
@@ -331,7 +347,6 @@ class CrawlerApp(tk.Frame):
         work.pack(side="left", fill="both", expand=True)
         self.topbar(work)
         self.results(work)
-        self.composer(work)
 
     def sidebar(self):
         side = tk.Frame(self, bg=self.C["side"], width=286, highlightbackground=self.C["line"], highlightthickness=1)
@@ -365,7 +380,7 @@ class CrawlerApp(tk.Frame):
 
     def results(self, parent):
         panel = tk.Frame(parent, bg=self.C["panel"], highlightbackground=self.C["line"], highlightthickness=1)
-        panel.pack(fill="both", expand=True, padx=28, pady=(0, 16))
+        panel.pack(fill="both", expand=True, padx=28, pady=(0, 24))
         head = tk.Frame(panel, bg=self.C["panel"])
         head.pack(fill="x", padx=18, pady=(16, 8))
         self.label(head, "抓取结果", size=17, weight="bold", bg=self.C["panel"]).pack(side="left")
@@ -378,26 +393,33 @@ class CrawlerApp(tk.Frame):
                             font=("Helvetica", 13, "bold"), cursor="hand2")
             btn.pack(side="left", padx=(0, 8))
             self.tabs[name] = btn
-        self.holder = tk.Frame(panel, bg=self.C["panel"])
-        self.holder.pack(fill="both", expand=True, padx=14, pady=(0, 14))
+        self.inline_composer(panel)
+        content = tk.Frame(panel, bg=self.C["panel"])
+        content.pack(fill="both", expand=True, padx=14, pady=(0, 14))
+        content.grid_columnconfigure(0, weight=1)
+        content.grid_columnconfigure(1, weight=0)
+        content.grid_rowconfigure(0, weight=1)
+        self.holder = tk.Frame(content, bg=self.C["panel"])
+        self.holder.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        self.preview_panel(content)
         self.summary = self.text_page("概览")
         self.body = self.text_page("正文")
         self.list_page("链接")
         self.list_page("图片")
         self.list_page("视频")
         self.html = self.text_page("HTML预览")
-        self.set_text(self.summary, "准备好了。\n\n把网页 URL 粘贴到底部的大输入框里，然后点击“抓取网页”。")
+        self.set_text(self.summary, "准备好了。\n\n把网页 URL 粘贴到上方输入框，然后点击“获取”。")
+        self.render_media_preview([], [])
         self.show("概览")
 
-    def composer(self, parent):
+    def inline_composer(self, parent):
         box = tk.Frame(parent, bg=self.C["panel"], highlightbackground=self.C["line"], highlightthickness=1)
-        box.pack(fill="x", padx=28, pady=(0, 24))
+        box.pack(fill="x", padx=14, pady=(0, 14))
         top = tk.Frame(box, bg=self.C["panel"])
-        top.pack(fill="x", padx=18, pady=(14, 8))
-        self.label(top, "网页 URL", size=14, weight="bold", bg=self.C["panel"]).pack(side="left")
-        self.label(top, "输入框在这里", size=12, fg=self.C["accent"], bg=self.C["panel"]).pack(side="left", padx=(10, 0))
+        top.pack(fill="x", padx=16, pady=(12, 6))
+        self.label(top, "将 URL 输入⬇️", size=14, weight="bold", fg=self.C["accent_dark"], bg=self.C["panel"]).pack(side="left")
         body = tk.Frame(box, bg=self.C["panel"])
-        body.pack(fill="x", padx=18, pady=(0, 16))
+        body.pack(fill="x", padx=16, pady=(0, 14))
         self.url = tk.Text(body, height=2, wrap="word", relief="flat", bd=0, padx=14, pady=12,
                            font=("Helvetica", 16), bg="#fff4e8", fg=self.C["muted"],
                            insertbackground=self.C["ink"], highlightthickness=2,
@@ -409,7 +431,7 @@ class CrawlerApp(tk.Frame):
         self.url.bind("<Return>", self.key_fetch)
         actions = tk.Frame(body, bg=self.C["panel"])
         actions.pack(side="right", fill="y")
-        self.fetch_btn = self.button(actions, "抓取网页", self.start_fetch, True)
+        self.fetch_btn = self.button(actions, "获取", self.start_fetch, True)
         self.fetch_btn.pack(fill="x")
         row = tk.Frame(actions, bg=self.C["panel"])
         row.pack(fill="x", pady=(8, 0))
@@ -418,6 +440,23 @@ class CrawlerApp(tk.Frame):
         self.save_btn = self.button(row, "保存", self.save_results)
         self.save_btn.configure(state=tk.DISABLED)
         self.save_btn.pack(side="left", padx=(8, 0))
+
+    def preview_panel(self, parent):
+        panel = tk.Frame(parent, bg=self.C["alt"], width=310, highlightbackground=self.C["line"], highlightthickness=1)
+        panel.grid(row=0, column=1, sticky="ns")
+        panel.grid_propagate(False)
+        self.label(panel, "媒体预览", size=15, weight="bold", bg=self.C["alt"]).pack(anchor="w", padx=14, pady=(14, 2))
+        self.label(panel, "图片会自动显示；点卡片即可下载。", size=11, fg=self.C["muted"], bg=self.C["alt"]).pack(anchor="w", padx=14, pady=(0, 10))
+        canvas = tk.Canvas(panel, bg=self.C["alt"], bd=0, highlightthickness=0)
+        scroll = tk.Scrollbar(panel, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scroll.set)
+        canvas.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=(0, 12))
+        scroll.pack(side="right", fill="y", pady=(0, 12))
+        self.preview_inner = tk.Frame(canvas, bg=self.C["alt"])
+        window = canvas.create_window((0, 0), window=self.preview_inner, anchor="nw")
+        self.preview_canvas = canvas
+        self.preview_inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(window, width=e.width))
 
     def text_page(self, name):
         frame = tk.Frame(self.holder, bg=self.C["panel"])
@@ -500,6 +539,7 @@ class CrawlerApp(tk.Frame):
         self.fill_list("链接", [])
         self.fill_list("图片", [])
         self.fill_list("视频", [])
+        self.render_media_preview([], [])
         self.set_busy(True, "正在抓取")
         self.show("概览")
         threading.Thread(target=self.worker, args=(url,), daemon=True).start()
@@ -521,6 +561,11 @@ class CrawlerApp(tk.Frame):
             elif kind == "download_err":
                 self.status.set("下载失败")
                 messagebox.showerror(APP_NAME, f"下载失败：\n{payload}")
+            elif kind == "preview_image":
+                slot_id, raw = payload
+                self.show_preview_image(slot_id, raw)
+            elif kind == "preview_error":
+                self.mark_preview_unavailable(payload)
             else:
                 self.show_error(payload)
         except queue.Empty:
@@ -564,6 +609,7 @@ class CrawlerApp(tk.Frame):
         self.fill_list("链接", result.links)
         self.fill_list("图片", result.images)
         self.fill_list("视频", result.videos)
+        self.render_media_preview(result.images, result.videos)
         self.show("概览")
 
     def show_error(self, message: str):
@@ -575,18 +621,19 @@ class CrawlerApp(tk.Frame):
 
     def set_busy(self, busy: bool, status: str):
         self.status.set(status)
-        self.fetch_btn.configure(text="抓取中..." if busy else "抓取网页", state=tk.DISABLED if busy else tk.NORMAL)
+        self.fetch_btn.configure(text="获取中..." if busy else "获取", state=tk.DISABLED if busy else tk.NORMAL)
         self.clear_btn.configure(state=tk.DISABLED if busy else tk.NORMAL)
 
     def clear_results(self):
         self.result = None
         self.save_btn.configure(state=tk.DISABLED)
-        self.set_text(self.summary, "准备好了。\n\n把网页 URL 粘贴到底部的大输入框里，然后点击“抓取网页”。")
+        self.set_text(self.summary, "准备好了。\n\n把网页 URL 粘贴到上方输入框，然后点击“获取”。")
         self.set_text(self.body, "")
         self.set_text(self.html, "")
         self.fill_list("链接", [])
         self.fill_list("图片", [])
         self.fill_list("视频", [])
+        self.render_media_preview([], [])
         for key, value in {"链接": "0", "图片": "0", "视频": "0", "标题": "0", "状态": "未抓取"}.items():
             self.metrics[key].set(value)
         self.status.set("等待 URL")
@@ -596,6 +643,134 @@ class CrawlerApp(tk.Frame):
         widget.delete("1.0", tk.END)
         widget.insert("1.0", value)
         widget.see("1.0")
+
+    def render_media_preview(self, images, videos):
+        self.preview_generation += 1
+        generation = self.preview_generation
+        self.preview_slots.clear()
+        self.preview_photos.clear()
+        for child in self.preview_inner.winfo_children():
+            child.destroy()
+
+        items = []
+        for item in images[:10]:
+            url = item.get("src", "")
+            if url:
+                items.append(("image", item.get("alt") or "图片资源", url))
+        for item in videos[:8]:
+            url = item.get("url", "")
+            if url:
+                items.append(("video", item.get("text") or "视频资源", url))
+
+        if not items:
+            empty = tk.Frame(self.preview_inner, bg=self.C["panel"], highlightbackground=self.C["line"], highlightthickness=1)
+            empty.pack(fill="x", padx=4, pady=4)
+            self.label(empty, "等待媒体结果", size=13, weight="bold", bg=self.C["panel"]).pack(anchor="w", padx=12, pady=(12, 3))
+            self.label(empty, "获取网页后，图片和视频会在这里直接出现。", size=11, fg=self.C["muted"], bg=self.C["panel"]).pack(fill="x", padx=12, pady=(0, 12))
+            return
+
+        for index, (kind, title, url) in enumerate(items):
+            card = tk.Frame(self.preview_inner, bg=self.C["panel"], highlightbackground=self.C["line"], highlightthickness=1, cursor="hand2")
+            card.pack(fill="x", padx=4, pady=5)
+            card.bind("<Button-1>", lambda _e, u=url: self.confirm_download(u))
+
+            if kind == "image":
+                thumb = tk.Label(card, text="正在加载图片预览...", bg="#fff4e8", fg=self.C["muted"],
+                                 height=7, wraplength=245, justify="center", cursor="hand2")
+                thumb.pack(fill="x", padx=10, pady=(10, 7))
+                thumb.bind("<Button-1>", lambda _e, u=url: self.confirm_download(u))
+                slot_id = (generation, index)
+                self.preview_slots[slot_id] = thumb
+                threading.Thread(target=self.preview_image_worker, args=(slot_id, url), daemon=True).start()
+            else:
+                box = tk.Label(card, text="视频资源\n点击选择下载", bg=self.C["accent_soft"], fg=self.C["ink"],
+                               height=5, font=("Helvetica", 13, "bold"), cursor="hand2", justify="center")
+                box.pack(fill="x", padx=10, pady=(10, 7))
+                box.bind("<Button-1>", lambda _e, u=url: self.confirm_download(u))
+
+            name = self.shorten(title or safe_filename_from_url(url, "media"), 34)
+            desc = self.shorten(url, 48)
+            title_label = self.label(card, name, size=12, weight="bold", bg=self.C["panel"])
+            title_label.pack(fill="x", padx=10)
+            title_label.bind("<Button-1>", lambda _e, u=url: self.confirm_download(u))
+            url_label = self.label(card, desc, size=10, fg=self.C["muted"], bg=self.C["panel"])
+            url_label.pack(fill="x", padx=10, pady=(2, 10))
+            url_label.bind("<Button-1>", lambda _e, u=url: self.confirm_download(u))
+
+        self.preview_canvas.yview_moveto(0)
+
+    def preview_image_worker(self, slot_id, url):
+        try:
+            self.q.put(("preview_image", (slot_id, fetch_preview_bytes(url))))
+        except Exception:
+            self.q.put(("preview_error", slot_id))
+
+    def show_preview_image(self, slot_id, raw):
+        if slot_id[0] != self.preview_generation:
+            return
+        label = self.preview_slots.get(slot_id)
+        if label is None:
+            return
+        photo = self.make_preview_photo(raw)
+        if photo is None:
+            self.mark_preview_unavailable(slot_id)
+            return
+        label.configure(image=photo, text="", height=0)
+        label.image = photo
+        self.preview_photos.append(photo)
+
+    def mark_preview_unavailable(self, slot_id):
+        if slot_id[0] != self.preview_generation:
+            return
+        label = self.preview_slots.get(slot_id)
+        if label is not None:
+            label.configure(text="图片暂时无法预览\n点击选择下载", fg=self.C["muted"], height=7)
+
+    def make_preview_photo(self, raw: bytes):
+        try:
+            from PIL import Image, ImageTk
+            image = Image.open(io.BytesIO(raw))
+            image.thumbnail((245, 150))
+            return ImageTk.PhotoImage(image)
+        except Exception:
+            pass
+
+        try:
+            encoded = base64.b64encode(raw).decode("ascii")
+            photo = tk.PhotoImage(data=encoded)
+            return self.scale_photo(photo)
+        except Exception:
+            pass
+
+        return self.make_sips_photo(raw)
+
+    def scale_photo(self, photo, max_width=245, max_height=150):
+        factor = max((photo.width() + max_width - 1) // max_width, (photo.height() + max_height - 1) // max_height, 1)
+        return photo.subsample(factor) if factor > 1 else photo
+
+    def make_sips_photo(self, raw: bytes):
+        input_path, output_path = None, None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False) as file:
+                file.write(raw)
+                input_path = Path(file.name)
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as file:
+                output_path = Path(file.name)
+            subprocess.run(
+                ["sips", "-s", "format", "png", str(input_path), "--out", str(output_path)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=4,
+                check=True,
+            )
+            return self.scale_photo(tk.PhotoImage(file=str(output_path)))
+        except Exception:
+            return None
+        finally:
+            if input_path:
+                input_path.unlink(missing_ok=True)
+            if output_path:
+                output_path.unlink(missing_ok=True)
 
     def shorten(self, value, limit):
         value = clean(value)
@@ -650,6 +825,13 @@ class CrawlerApp(tk.Frame):
         if not url:
             messagebox.showinfo(APP_NAME, "请先选择一条记录。")
             return
+        self.choose_download_path(url)
+
+    def confirm_download(self, url):
+        if messagebox.askyesno(APP_NAME, f"要下载这个资源吗？\n\n{self.shorten(url, 90)}"):
+            self.choose_download_path(url)
+
+    def choose_download_path(self, url):
         downloads = Path.home() / "Downloads"
         initialdir = downloads if downloads.exists() else Path.cwd()
         path = filedialog.asksaveasfilename(
