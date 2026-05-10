@@ -19,10 +19,8 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
-    name='crawler_app',
+    name='WebCrawler',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -31,15 +29,32 @@ exe = EXE(
     runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
+    exclude_binaries=True,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
     icon=None,
 )
-app = BUNDLE(
+coll = COLLECT(
     exe,
-    name='crawler_app.app',
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='WebCrawler',
+)
+app = BUNDLE(
+    coll,
+    name='WebCrawler.app',
     icon=None,
-    bundle_identifier=None,
+    bundle_identifier='com.matttride.webcrawler',
+    info_plist={
+        'CFBundleName': '网页爬虫小程序',
+        'CFBundleDisplayName': 'WebCrawler',
+        'CFBundleShortVersionString': '1.0.0',
+        'CFBundleVersion': '1.0.0',
+        'NSHighResolutionCapable': True,
+    },
 )
