@@ -335,11 +335,13 @@ class CrawlerApp(tk.Frame):
 
     def button(self, parent, text, command, primary=False):
         bg = self.C["accent"] if primary else self.C["panel"]
-        fg = "#fffaf3" if primary else self.C["ink"]
+        fg = self.C["ink"]
         return tk.Button(parent, text=text, command=command, bg=bg, fg=fg, relief="flat", bd=0, padx=18, pady=10,
                          activebackground=self.C["accent_dark"] if primary else self.C["accent_soft"],
                          activeforeground=fg, font=("Helvetica", 13, "bold" if primary else "normal"),
-                         cursor="hand2", highlightthickness=1, highlightbackground=self.C["line"])
+                         disabledforeground=self.C["muted"],
+                         cursor="hand2", highlightthickness=1,
+                         highlightbackground=self.C["accent_dark"] if primary else self.C["line"])
 
     def build(self):
         self.sidebar()
@@ -429,17 +431,15 @@ class CrawlerApp(tk.Frame):
         self.url.bind("<FocusIn>", self.clear_placeholder)
         self.url.bind("<FocusOut>", self.restore_placeholder)
         self.url.bind("<Return>", self.key_fetch)
-        actions = tk.Frame(body, bg=self.C["panel"])
-        actions.pack(side="right", fill="y")
-        self.fetch_btn = self.button(actions, "获取", self.start_fetch, True)
-        self.fetch_btn.pack(fill="x")
-        row = tk.Frame(actions, bg=self.C["panel"])
-        row.pack(fill="x", pady=(8, 0))
+        row = tk.Frame(box, bg=self.C["panel"])
+        row.pack(fill="x", padx=16, pady=(0, 14))
+        self.fetch_btn = self.button(row, "获取", self.start_fetch, True)
+        self.fetch_btn.pack(side="left", ipadx=34)
         self.clear_btn = self.button(row, "清空", self.clear_results)
-        self.clear_btn.pack(side="left")
+        self.clear_btn.pack(side="left", padx=(10, 0))
         self.save_btn = self.button(row, "保存", self.save_results)
         self.save_btn.configure(state=tk.DISABLED)
-        self.save_btn.pack(side="left", padx=(8, 0))
+        self.save_btn.pack(side="left", padx=(10, 0))
 
     def preview_panel(self, parent):
         panel = tk.Frame(parent, bg=self.C["alt"], width=310, highlightbackground=self.C["line"], highlightthickness=1)
@@ -525,8 +525,13 @@ class CrawlerApp(tk.Frame):
         return "break"
 
     def start_fetch(self):
+        raw_url = self.read_url()
+        if not raw_url.strip():
+            self.status.set("请输入链接")
+            messagebox.showwarning(APP_NAME, "请输入链接")
+            return
         try:
-            url = normalize_url(self.read_url())
+            url = normalize_url(raw_url)
         except ValueError as err:
             messagebox.showwarning(APP_NAME, str(err))
             return
