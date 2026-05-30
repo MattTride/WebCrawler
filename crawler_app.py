@@ -20,6 +20,7 @@ from crawler_core import (
     fetch_preview_bytes,
     fetch_url,
     normalize_url,
+    result_to_markdown,
     safe_filename_from_url,
 )
 
@@ -597,10 +598,13 @@ class CrawlerApp(tk.Frame):
             initialdir=str(Path.cwd()),
             initialfile=f"crawler-result-{time.strftime('%Y%m%d-%H%M%S')}.json",
             defaultextension=".json",
-            filetypes=(("JSON 文件", "*.json"), ("所有文件", "*.*")),
+            filetypes=(("JSON 文件", "*.json"), ("Markdown 文件", "*.md"), ("所有文件", "*.*")),
         )
         if path:
-            Path(path).write_text(json.dumps(self.result.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+            if path.lower().endswith(".md"):
+                Path(path).write_text(result_to_markdown(self.result), encoding="utf-8")
+            else:
+                Path(path).write_text(json.dumps(self.result.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
             self.status.set("结果已保存")
             messagebox.showinfo(APP_NAME, "抓取结果已保存。")
 

@@ -245,3 +245,31 @@ def test_robots_blocks_disallowed_path(monkeypatch):
     )
     assert crawler_core.robots_allowed("https://example.com/private/secret") is False
     assert crawler_core.robots_allowed("https://example.com/public/ok") is True
+
+
+# --- markdown export -------------------------------------------------------
+
+def test_result_to_markdown_renders_sections():
+    result = crawler_core.CrawlResult(
+        requested_url="https://example.com",
+        final_url="https://example.com/",
+        status_code=200, reason="OK",
+        content_type="text/html", encoding="utf-8",
+        title="My Page", description="A page.",
+        headings=[{"level": "H1", "text": "Top"}, {"level": "H2", "text": "Sub"}],
+        links=[{"text": "Home", "url": "https://example.com/home"}],
+        images=[{"alt": "Logo", "src": "https://example.com/logo.png"}],
+        videos=[{"text": "Clip", "url": "https://example.com/clip.mp4"}],
+        text="Body text here.",
+        html_preview="<html>", bytes_read=123, truncated=False,
+        fetched_at="2026-05-30 10:00:00",
+    )
+    md = crawler_core.result_to_markdown(result)
+    assert md.startswith("# My Page")
+    assert "A page." in md
+    assert "- H1 Top" in md
+    assert "  - H2 Sub" in md                                   # nested heading
+    assert "[Home](https://example.com/home)" in md
+    assert "![Logo](https://example.com/logo.png)" in md        # image syntax
+    assert "[Clip](https://example.com/clip.mp4)" in md
+    assert "## 正文" in md and "Body text here." in md

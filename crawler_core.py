@@ -119,6 +119,43 @@ class CrawlResult:
         return asdict(self)
 
 
+def result_to_markdown(result: CrawlResult) -> str:
+    """Render a CrawlResult as human-readable Markdown."""
+    status = f"{result.status_code} {result.reason}".strip() if result.status_code else "无状态码"
+    lines = [f"# {result.title}", ""]
+    if result.description:
+        lines += [result.description, ""]
+    lines += [
+        f"- 抓取时间：{result.fetched_at}",
+        f"- 请求地址：{result.requested_url}",
+        f"- 最终地址：{result.final_url}",
+        f"- 状态：{status}",
+        "",
+    ]
+    if result.headings:
+        lines.append("## 标题结构")
+        for h in result.headings:
+            indent = "  " * (int(h["level"][1]) - 1)
+            lines.append(f"{indent}- {h['level']} {h['text']}")
+        lines.append("")
+    for name, items, label_key, url_key, is_image in (
+        ("链接", result.links, "text", "url", False),
+        ("图片", result.images, "alt", "src", True),
+        ("视频", result.videos, "text", "url", False),
+    ):
+        if not items:
+            continue
+        lines.append(f"## {name}（{len(items)}）")
+        for item in items:
+            url = item.get(url_key, "")
+            label = clean(item.get(label_key, "")) or url
+            lines.append(f"- {'!' if is_image else ''}[{label}]({url})")
+        lines.append("")
+    if result.text:
+        lines += ["## 正文", "", result.text, ""]
+    return "\n".join(lines).rstrip() + "\n"
+
+
 class PageParser(HTMLParser):
     def __init__(self, base_url: str):
         super().__init__(convert_charrefs=True)
