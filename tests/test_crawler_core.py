@@ -1,4 +1,6 @@
 """Unit tests for crawler_core: the tkinter-free fetch/parse logic."""
+import urllib.error
+
 import pytest
 
 import crawler_core
@@ -181,7 +183,7 @@ def test_fetch_url_decodes_and_parses(monkeypatch):
         crawler_core.urllib.request, "urlopen",
         lambda req, timeout=None: _FakeResponse(body),
     )
-    result = fetch_url("example.com")
+    result = fetch_url("example.com", respect_robots=False)
     assert result.status_code == 200
     assert result.reason == "OK"
     assert result.title == "Hi"
@@ -189,3 +191,57 @@ def test_fetch_url_decodes_and_parses(monkeypatch):
     assert result.truncated is False
     assert result.bytes_read == len(body)
     assert any(link["url"] == "https://example.com/x" for link in result.links)
+
+
+# --- robots.txt and retries ------------------------------------------------
+
+def test_fetch_url_blocked_by_robots(monkeypatch):
+    monkeypatch.setattr(crawler_core, "robots_allowed", lambda *a, **k: False)
+    with pytest.raises(crawler_core.RobotsDisallowed):
+        fetch_url("https://example.com/")
+
+
+def test_fetch_url_retries_then_succeeds(monkeypatch):
+    calls = {"n": 0}
+
+    def flaky(req, timeout=None):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise urllib.error.URLError("temporarily down")
+        return _FakeResponse(b"<title>OK</title>")
+
+    monkeypatch.setattr(crawler_core.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(crawler_core.urllib.request, "urlopen", flaky)
+    result = fetch_url("example.com", respect_robots=False)
+    assert result.title == "OK"
+    assert calls["n"] == 3  # 1 attempt + 2 retries (RETRIES=2)
+
+
+def test_fetch_url_raises_friendly_message_after_retries(monkeypatch):
+    monkeypatch.setattr(crawler_core.time, "sleep", lambda *_: None)
+
+    def always_timeout(req, timeout=None):
+        raise urllib.error.URLError(TimeoutError("timed out"))
+
+    monkeypatch.setattr(crawler_core.urllib.request, "urlopen", always_timeout)
+    with pytest.raises(crawler_core.FetchError) as exc:
+        fetch_url("example.com", respect_robots=False)
+    assert "超时" in str(exc.value)
+
+
+def test_robots_allowed_fails_open_when_unreachable(monkeypatch):
+    def boom(req, timeout=None):
+        raise urllib.error.URLError("no robots.txt here")
+
+    monkeypatch.setattr(crawler_core.urllib.request, "urlopen", boom)
+    assert crawler_core.robots_allowed("https://example.com/page") is True
+
+
+def test_robots_blocks_disallowed_path(monkeypatch):
+    robots = "User-agent: *\nDisallow: /private/"
+    monkeypatch.setattr(
+        crawler_core.urllib.request, "urlopen",
+        lambda req, timeout=None: _FakeResponse(robots.encode("utf-8")),
+    )
+    assert crawler_core.robots_allowed("https://example.com/private/secret") is False
+    assert crawler_core.robots_allowed("https://example.com/public/ok") is True

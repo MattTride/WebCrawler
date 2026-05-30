@@ -10,6 +10,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import urllib.robotparser
 from dataclasses import asdict, dataclass
 from html.parser import HTMLParser
 from pathlib import Path
@@ -20,6 +21,11 @@ PREVIEW_MAX_BYTES = 800_000
 TIMEOUT = 15
 DOWNLOAD_TIMEOUT = 45
 PREVIEW_TIMEOUT = 8
+USER_AGENT = "Mozilla/5.0 MiniCrawler/1.0"
+RETRIES = 2
+RETRY_BACKOFF = 0.6
+ROBOTS_TIMEOUT = 8
+ROBOTS_MAX_BYTES = 200_000
 SKIP_TAGS = {"script", "style", "noscript", "template", "svg", "canvas"}
 HEADINGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov", ".m4v", ".avi", ".mkv", ".ogv", ".3gp", ".flv"}
@@ -223,22 +229,71 @@ class PageParser(HTMLParser):
         return clean(" ".join(self.text_parts))[:20_000]
 
 
-def fetch_url(url: str) -> CrawlResult:
+class FetchError(Exception):
+    """A network-level failure carrying a human-friendly Chinese message."""
+
+
+class RobotsDisallowed(FetchError):
+    """Raised when robots.txt forbids fetching the target URL."""
+
+
+def friendly_network_error(err: Exception) -> str:
+    text = str(getattr(err, "reason", err)) or err.__class__.__name__
+    low = text.lower()
+    if "timed out" in low or isinstance(getattr(err, "reason", None), TimeoutError):
+        return "请求超时，目标网站响应太慢，请稍后重试。"
+    if "getaddrinfo" in low or "name or service" in low or "nodename nor servname" in low:
+        return "无法解析域名，请检查网址是否正确。"
+    if "connection refused" in low:
+        return "目标服务器拒绝连接。"
+    if "ssl" in low or "certificate" in low or "cert" in low:
+        return f"HTTPS 安全连接失败：{text}"
+    return f"网络错误：{text}"
+
+
+def robots_allowed(url: str, user_agent: str = USER_AGENT, timeout: float = ROBOTS_TIMEOUT) -> bool:
+    """Best-effort robots.txt check. Fails open (returns True) when robots.txt
+    cannot be read, matching common crawler behaviour."""
+    parts = urllib.parse.urlparse(url)
+    robots_url = f"{parts.scheme}://{parts.netloc}/robots.txt"
+    try:
+        req = urllib.request.Request(robots_url, headers={"User-Agent": user_agent})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read(ROBOTS_MAX_BYTES).decode("utf-8", "replace")
+    except Exception:
+        return True
+    parser = urllib.robotparser.RobotFileParser()
+    parser.parse(body.splitlines())
+    return parser.can_fetch(user_agent, url)
+
+
+def fetch_url(url: str, respect_robots: bool = True) -> CrawlResult:
     url = normalize_url(url)
+    if respect_robots and not robots_allowed(url):
+        raise RobotsDisallowed("该网站的 robots.txt 不允许抓取此页面。")
     req = urllib.request.Request(url, headers={
-        "User-Agent": "Mozilla/5.0 MiniCrawler/1.0",
+        "User-Agent": USER_AGENT,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5",
     })
     final_url, status, reason, content_type, charset = url, None, "", "", None
-    try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-            raw = resp.read(MAX_BYTES + 1)
-            final_url, status, reason = resp.geturl(), getattr(resp, "status", None), getattr(resp, "reason", "")
-            content_type, charset = resp.headers.get("Content-Type", ""), resp.headers.get_content_charset()
-    except urllib.error.HTTPError as err:
-        raw = err.read(MAX_BYTES + 1)
-        final_url, status, reason = err.geturl(), err.code, err.reason or ""
-        content_type, charset = err.headers.get("Content-Type", ""), err.headers.get_content_charset()
+    raw = b""
+    for attempt in range(RETRIES + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+                raw = resp.read(MAX_BYTES + 1)
+                final_url, status, reason = resp.geturl(), getattr(resp, "status", None), getattr(resp, "reason", "")
+                content_type, charset = resp.headers.get("Content-Type", ""), resp.headers.get_content_charset()
+            break
+        except urllib.error.HTTPError as err:
+            raw = err.read(MAX_BYTES + 1)
+            final_url, status, reason = err.geturl(), err.code, err.reason or ""
+            content_type, charset = err.headers.get("Content-Type", ""), err.headers.get_content_charset()
+            break
+        except urllib.error.URLError as err:
+            if attempt < RETRIES:
+                time.sleep(RETRY_BACKOFF * (attempt + 1))
+                continue
+            raise FetchError(friendly_network_error(err)) from err
 
     truncated = len(raw) > MAX_BYTES
     raw = raw[:MAX_BYTES]
@@ -274,7 +329,7 @@ def fetch_url(url: str) -> CrawlResult:
 
 def download_file(url: str, path: Path) -> int:
     req = urllib.request.Request(url, headers={
-        "User-Agent": "Mozilla/5.0 MiniCrawler/1.0",
+        "User-Agent": USER_AGENT,
         "Accept": "*/*",
     })
     written = 0
@@ -291,7 +346,7 @@ def download_file(url: str, path: Path) -> int:
 
 def fetch_preview_bytes(url: str) -> bytes:
     req = urllib.request.Request(url, headers={
-        "User-Agent": "Mozilla/5.0 MiniCrawler/1.0",
+        "User-Agent": USER_AGENT,
         "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
     })
     with urllib.request.urlopen(req, timeout=PREVIEW_TIMEOUT) as resp:
