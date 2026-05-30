@@ -112,9 +112,12 @@ run_crawler.command
 
 ```text
 .
-├── crawler_app.py          # 应用主程序
+├── crawler_app.py          # 桌面界面（tkinter）
+├── crawler_core.py         # 抓取与解析核心（无界面依赖，可单独测试）
+├── tests/                  # pytest 单元测试
+├── conftest.py             # 让 tests 能导入 crawler_core
+├── requirements-dev.txt    # 开发依赖（仅 pytest）
 ├── run_crawler.command     # macOS 备用启动脚本
-├── WebCrawler.app/         # 轻量 macOS 双击启动外壳
 ├── crawler_app.spec        # PyInstaller 打包配置
 ├── README.md               # 项目说明
 ├── LICENSE                 # MIT License
@@ -123,12 +126,21 @@ run_crawler.command
 
 ## 开发说明
 
-主程序包含两个核心部分：
+项目分成两个文件，职责清晰：
 
-- 抓取与解析：使用 `urllib.request` 获取网页，使用 `html.parser.HTMLParser` 提取标题、描述、正文、链接、图片和视频。
-- 桌面界面：使用 `tkinter` 构建窗口、输入框、按钮、标签页和结果展示区域。
+- `crawler_core.py`：抓取与解析核心。使用 `urllib.request` 获取网页，使用 `html.parser.HTMLParser` 提取标题、描述、正文、链接、图片和视频。没有任何界面依赖，可以脱离窗口单独测试或复用。
+- `crawler_app.py`：桌面界面。使用 `tkinter` 构建窗口、输入框、按钮、标签页和结果展示区域，并调用 `crawler_core` 完成抓取。
 
 为了保持项目轻量，当前版本没有引入第三方 HTML 解析库。对于复杂的现代网页，尤其是依赖 JavaScript 渲染内容的网站，应用只能抓取服务器返回的初始 HTML，无法执行页面脚本。
+
+## 运行测试
+
+核心逻辑由 pytest 单元测试覆盖，运行时不联网、也不会弹出窗口：
+
+```bash
+python3 -m pip install -r requirements-dev.txt
+python3 -m pytest
+```
 
 ## 打包说明
 
