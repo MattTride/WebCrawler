@@ -13,7 +13,7 @@ env/
 build/
 dist/
 *.spec~
-WebCrawler.app/Contents/_CodeSignature/
+WebCrawler.app/
 
 crawler-result-*.json
 WebCrawler-source.zip
