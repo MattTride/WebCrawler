@@ -273,3 +273,29 @@ def test_result_to_markdown_renders_sections():
     assert "![Logo](https://example.com/logo.png)" in md        # image syntax
     assert "[Clip](https://example.com/clip.mp4)" in md
     assert "## 正文" in md and "Body text here." in md
+
+
+# --- raw server response ---------------------------------------------------
+
+def test_fetch_raw_response_includes_status_headers_body(monkeypatch):
+    class FullHeaders:
+        def get(self, key, default=""):
+            return {"Content-Type": "text/html; charset=utf-8"}.get(key, default)
+
+        def get_content_charset(self):
+            return "utf-8"
+
+        def items(self):
+            return [("Content-Type", "text/html; charset=utf-8"), ("Server", "nginx")]
+
+    class RawResp(_FakeResponse):
+        headers = FullHeaders()
+
+    monkeypatch.setattr(
+        crawler_core.urllib.request, "urlopen",
+        lambda req, timeout=None: RawResp(b"<html>hello-raw</html>"),
+    )
+    out = crawler_core.fetch_raw_response("example.com", respect_robots=False)
+    assert out.startswith("HTTP 200 OK")
+    assert "Server: nginx" in out
+    assert "hello-raw" in out

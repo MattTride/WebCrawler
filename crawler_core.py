@@ -304,34 +304,35 @@ def robots_allowed(url: str, user_agent: str = USER_AGENT, timeout: float = ROBO
     return parser.can_fetch(user_agent, url)
 
 
-def fetch_url(url: str, respect_robots: bool = True) -> CrawlResult:
-    url = normalize_url(url)
+HTML_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5"
+
+
+def _open_response(url: str, respect_robots: bool, accept: str):
+    """Fetch raw bytes with a robots check and retry. Returns
+    (final_url, status, reason, headers, raw_bytes). HTTP error responses
+    (e.g. 404) are returned, not raised, so callers can inspect them."""
     if respect_robots and not robots_allowed(url):
         raise RobotsDisallowed("该网站的 robots.txt 不允许抓取此页面。")
-    req = urllib.request.Request(url, headers={
-        "User-Agent": USER_AGENT,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5",
-    })
-    final_url, status, reason, content_type, charset = url, None, "", "", None
-    raw = b""
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": accept})
     for attempt in range(RETRIES + 1):
         try:
             with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
                 raw = resp.read(MAX_BYTES + 1)
-                final_url, status, reason = resp.geturl(), getattr(resp, "status", None), getattr(resp, "reason", "")
-                content_type, charset = resp.headers.get("Content-Type", ""), resp.headers.get_content_charset()
-            break
+                return resp.geturl(), getattr(resp, "status", None), getattr(resp, "reason", ""), resp.headers, raw
         except urllib.error.HTTPError as err:
             raw = err.read(MAX_BYTES + 1)
-            final_url, status, reason = err.geturl(), err.code, err.reason or ""
-            content_type, charset = err.headers.get("Content-Type", ""), err.headers.get_content_charset()
-            break
+            return err.geturl(), err.code, err.reason or "", err.headers, raw
         except urllib.error.URLError as err:
             if attempt < RETRIES:
                 time.sleep(RETRY_BACKOFF * (attempt + 1))
                 continue
             raise FetchError(friendly_network_error(err)) from err
 
+
+def fetch_url(url: str, respect_robots: bool = True) -> CrawlResult:
+    url = normalize_url(url)
+    final_url, status, reason, headers, raw = _open_response(url, respect_robots, HTML_ACCEPT)
+    content_type, charset = headers.get("Content-Type", ""), headers.get_content_charset()
     truncated = len(raw) > MAX_BYTES
     raw = raw[:MAX_BYTES]
     encoding = charset or meta_encoding(raw) or "utf-8"
@@ -362,6 +363,34 @@ def fetch_url(url: str, respect_robots: bool = True) -> CrawlResult:
         truncated=truncated,
         fetched_at=time.strftime("%Y-%m-%d %H:%M:%S"),
     )
+
+
+def fetch_raw_response(url: str, respect_robots: bool = True, max_body_chars: int = 200_000) -> str:
+    """Fetch the URL and return the raw server response as text: the status
+    line, every response header, then the decoded body. Useful for seeing
+    what the server actually returns right now (e.g. for JS-rendered pages)."""
+    url = normalize_url(url)
+    final_url, status, reason, headers, raw = _open_response(url, respect_robots, "*/*")
+    truncated = len(raw) > MAX_BYTES
+    raw = raw[:MAX_BYTES]
+    encoding = headers.get_content_charset() or meta_encoding(raw) or "utf-8"
+    try:
+        body = raw.decode(encoding, "replace")
+    except LookupError:
+        body = raw.decode("utf-8", "replace")
+    lines = [
+        f"HTTP {status} {reason}".rstrip(),
+        f"最终地址：{final_url}",
+        f"读取大小：{len(raw):,} bytes" + ("（已截断）" if truncated else ""),
+        "",
+    ]
+    for key, value in headers.items():
+        lines.append(f"{key}: {value}")
+    lines += ["", "=" * 60, ""]
+    clipped = body[:max_body_chars]
+    if len(body) > max_body_chars:
+        clipped += "\n\n（正文过长，已截断预览）"
+    return "\n".join(lines) + clipped + "\n"
 
 
 def download_file(url: str, path: Path) -> int:

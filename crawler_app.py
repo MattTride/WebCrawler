@@ -18,6 +18,7 @@ from crawler_core import (
     clean,
     download_file,
     fetch_preview_bytes,
+    fetch_raw_response,
     fetch_url,
     normalize_url,
     result_to_markdown,
@@ -32,7 +33,7 @@ class CrawlerApp(tk.Frame):
         "bg": "#F5F4EF", "panel": "#FBFAF7", "alt": "#EFEDE4", "side": "#EEEBE2",
         "line": "#E2DFD4", "ink": "#2A2722", "muted": "#7C756A",
         "accent": "#D97757", "accent_dark": "#C15F3C", "accent_soft": "#F0DCD0",
-        "green": "#5B6E61", "on_accent": "#FFFFFF", "input": "#FFFFFF",
+        "green": "#5B6E61", "input": "#FFFFFF",
     }
     PLACEHOLDER = "粘贴或输入网页 URL，例如：https://example.com"
 
@@ -61,7 +62,7 @@ class CrawlerApp(tk.Frame):
 
     def button(self, parent, text, command, primary=False):
         bg = self.C["accent"] if primary else self.C["panel"]
-        fg = self.C["on_accent"] if primary else self.C["ink"]
+        fg = self.C["ink"]
         return tk.Button(parent, text=text, command=command, bg=bg, fg=fg, relief="flat", bd=0, padx=18, pady=10,
                          activebackground=self.C["accent_dark"] if primary else self.C["accent_soft"],
                          activeforeground=fg, font=("Helvetica", 13, "bold" if primary else "normal"),
@@ -166,6 +167,8 @@ class CrawlerApp(tk.Frame):
         self.save_btn = self.button(row, "保存", self.save_results)
         self.save_btn.configure(state=tk.DISABLED)
         self.save_btn.pack(side="left", padx=(10, 0))
+        self.raw_btn = self.button(row, "原始响应", self.show_raw_response)
+        self.raw_btn.pack(side="left", padx=(10, 0))
         self.robots_check = tk.Checkbutton(
             row, text="遵守 robots.txt", variable=self.respect_robots,
             bg=self.C["panel"], fg=self.C["muted"], activebackground=self.C["panel"],
@@ -287,6 +290,48 @@ class CrawlerApp(tk.Frame):
         except Exception as err:
             self.q.put(("err", str(err)))
 
+    def show_raw_response(self):
+        raw_url = self.read_url()
+        if not raw_url.strip():
+            self.status.set("请输入链接")
+            messagebox.showwarning(APP_NAME, "请输入链接")
+            return
+        try:
+            url = normalize_url(raw_url)
+        except ValueError as err:
+            messagebox.showwarning(APP_NAME, str(err))
+            return
+        self.write_url(url)
+        self.status.set("正在获取原始响应")
+        threading.Thread(target=self.raw_worker, args=(url, self.respect_robots.get()), daemon=True).start()
+
+    def raw_worker(self, url, respect_robots):
+        try:
+            self.q.put(("raw_ok", fetch_raw_response(url, respect_robots=respect_robots)))
+        except Exception as err:
+            self.q.put(("raw_err", str(err)))
+
+    def open_raw_window(self, text):
+        win = tk.Toplevel(self.root)
+        win.title("服务器原始响应")
+        win.geometry("780x640")
+        win.configure(bg=self.C["bg"])
+        frame = tk.Frame(win, bg=self.C["panel"], highlightbackground=self.C["line"], highlightthickness=1)
+        frame.pack(fill="both", expand=True, padx=14, pady=14)
+        box = tk.Text(frame, wrap="none", relief="flat", bd=0, padx=16, pady=14,
+                      font=("Menlo", 12), bg=self.C["alt"], fg=self.C["ink"],
+                      insertbackground=self.C["ink"], selectbackground=self.C["accent_soft"])
+        yscroll = tk.Scrollbar(frame, orient="vertical", command=box.yview)
+        xscroll = tk.Scrollbar(frame, orient="horizontal", command=box.xview)
+        box.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+        box.grid(row=0, column=0, sticky="nsew")
+        yscroll.grid(row=0, column=1, sticky="ns")
+        xscroll.grid(row=1, column=0, sticky="ew")
+        frame.grid_rowconfigure(0, weight=1)
+        frame.grid_columnconfigure(0, weight=1)
+        box.insert("1.0", text)
+        box.configure(state="disabled")
+
     def poll(self):
         try:
             kind, payload = self.q.get_nowait()
@@ -303,6 +348,12 @@ class CrawlerApp(tk.Frame):
                 self.show_preview_image(slot_id, raw)
             elif kind == "preview_error":
                 self.mark_preview_unavailable(payload)
+            elif kind == "raw_ok":
+                self.status.set("原始响应已获取")
+                self.open_raw_window(payload)
+            elif kind == "raw_err":
+                self.status.set("获取失败")
+                messagebox.showerror(APP_NAME, f"获取原始响应失败：\n{payload}")
             else:
                 self.show_error(payload)
         except queue.Empty:
