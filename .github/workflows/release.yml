@@ -22,7 +22,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-13            # Intel build runs on Intel + Apple Silicon (Rosetta)
+          - os: macos-latest        # Apple Silicon (arm64); shorter runner queue
             label: macOS
             asset: WebCrawler-macOS.zip
           - os: windows-latest
