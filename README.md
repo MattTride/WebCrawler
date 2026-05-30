@@ -2,6 +2,18 @@
 
 一个用 Python 编写的桌面网页爬虫应用。它提供类似 Claude 工作台的浅色界面：左侧显示抓取状态，中间展示结果，上方固定一个醒目的 URL 输入框。用户输入网页地址后，应用会抓取单个页面并提取标题、描述、正文、链接、图片、视频和 HTML 预览。
 
+## 下载
+
+根据操作系统点击下载（链接指向最新 Release，会自动跳转到对应安装包）：
+
+[![Download for macOS](https://img.shields.io/badge/Download-macOS-111111?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/MattTride/WebCrawler/releases/latest/download/WebCrawler-macOS.zip)
+[![Download for Windows](https://img.shields.io/badge/Download-Windows-0067b8?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/MattTride/WebCrawler/releases/latest/download/WebCrawler-Windows.zip)
+
+- **macOS**：[下载 WebCrawler-macOS.zip](https://github.com/MattTride/WebCrawler/releases/latest/download/WebCrawler-macOS.zip)。解压后双击 `WebCrawler.app`；若提示“来自未识别的开发者”，右键点图标选“打开”。
+- **Windows**：[下载 WebCrawler-Windows.zip](https://github.com/MattTride/WebCrawler/releases/latest/download/WebCrawler-Windows.zip)。解压后双击 `WebCrawler.exe`；若 SmartScreen 拦截，点“更多信息”→“仍要运行”。
+
+> 安装包由 GitHub Actions 在推送 `v*` 版本标签时自动在 macOS / Windows 机器上构建（见 [`.github/workflows/release.yml`](.github/workflows/release.yml)），二进制不提交进仓库。首个 Release 生成后，上述链接即生效。
+
 ## 项目特点
 
 - 独立桌面界面，使用 Python 标准库 `tkinter` 构建。
@@ -43,19 +55,7 @@
 python3 crawler_app.py
 ```
 
-macOS 用户可以直接双击：
-
-```text
-WebCrawler.app
-```
-
-这是独立打包的应用，已经包含运行所需的 Python 和 Tk。macOS 如果提示来自未识别开发者，请右键选择“打开”。
-
-也可以双击备用启动脚本：
-
-```text
-run_crawler.command
-```
+不想装 Python？用打包好的桌面版，见上面的 [下载](#下载)（macOS / Windows）。macOS 也可以双击备用启动脚本 `run_crawler.command` 从源码启动。
 
 ## 使用方法
 
@@ -126,6 +126,7 @@ run_crawler.command
 ├── requirements-dev.txt    # 开发依赖（仅 pytest）
 ├── run_crawler.command     # macOS 备用启动脚本
 ├── crawler_app.spec        # PyInstaller 打包配置
+├── .github/workflows/      # GitHub Actions：打 tag 自动构建 macOS/Windows 安装包
 ├── README.md               # 项目说明
 ├── LICENSE                 # MIT License
 └── .gitignore              # Git 忽略规则
@@ -159,6 +160,15 @@ pyinstaller --noconfirm crawler_app.spec
 ```
 
 打包结果会生成在 `dist/` 目录中。`dist/` 和 `build/` 属于生成文件，默认不会提交到 Git。
+
+发布带下载包的版本：推送一个 `v` 开头的标签，即可触发 GitHub Actions 在 macOS 与 Windows 上分别构建，并发布到对应的 GitHub Release：
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+也可以在 GitHub 仓库的 Actions 页面手动运行 “Build release packages”。
 
 ## 注意事项
 
