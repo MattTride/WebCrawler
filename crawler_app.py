@@ -28,9 +28,10 @@ APP_NAME = "网页爬虫小程序"
 
 class CrawlerApp(tk.Frame):
     C = {
-        "bg": "#f4eee6", "panel": "#fffaf3", "alt": "#f9f1e8", "side": "#eadfd1",
-        "line": "#d8c8b8", "ink": "#2f2a25", "muted": "#74695f",
-        "accent": "#c76645", "accent_dark": "#9d4e35", "accent_soft": "#f3d6c9", "green": "#46685c",
+        "bg": "#F5F4EF", "panel": "#FBFAF7", "alt": "#EFEDE4", "side": "#EEEBE2",
+        "line": "#E2DFD4", "ink": "#2A2722", "muted": "#7C756A",
+        "accent": "#D97757", "accent_dark": "#C15F3C", "accent_soft": "#F0DCD0",
+        "green": "#5B6E61", "on_accent": "#FFFFFF", "input": "#FFFFFF",
     }
     PLACEHOLDER = "粘贴或输入网页 URL，例如：https://example.com"
 
@@ -41,6 +42,7 @@ class CrawlerApp(tk.Frame):
         self.link_items, self.image_items, self.video_items, self.placeholder = [], [], [], True
         self.preview_slots, self.preview_photos, self.preview_generation = {}, [], 0
         self.status = tk.StringVar(value="等待 URL")
+        self.respect_robots = tk.BooleanVar(value=True)
         self.metrics = {k: tk.StringVar(value=v) for k, v in {
             "链接": "0", "图片": "0", "视频": "0", "标题": "0", "状态": "未抓取",
         }.items()}
@@ -58,7 +60,7 @@ class CrawlerApp(tk.Frame):
 
     def button(self, parent, text, command, primary=False):
         bg = self.C["accent"] if primary else self.C["panel"]
-        fg = self.C["ink"]
+        fg = self.C["on_accent"] if primary else self.C["ink"]
         return tk.Button(parent, text=text, command=command, bg=bg, fg=fg, relief="flat", bd=0, padx=18, pady=10,
                          activebackground=self.C["accent_dark"] if primary else self.C["accent_soft"],
                          activeforeground=fg, font=("Helvetica", 13, "bold" if primary else "normal"),
@@ -146,7 +148,7 @@ class CrawlerApp(tk.Frame):
         body = tk.Frame(box, bg=self.C["panel"])
         body.pack(fill="x", padx=16, pady=(0, 14))
         self.url = tk.Text(body, height=2, wrap="word", relief="flat", bd=0, padx=14, pady=12,
-                           font=("Helvetica", 16), bg="#fff4e8", fg=self.C["muted"],
+                           font=("Helvetica", 16), bg=self.C["input"], fg=self.C["muted"],
                            insertbackground=self.C["ink"], highlightthickness=2,
                            highlightbackground=self.C["accent_soft"], highlightcolor=self.C["accent"])
         self.url.pack(side="left", fill="x", expand=True, padx=(0, 12))
@@ -163,6 +165,12 @@ class CrawlerApp(tk.Frame):
         self.save_btn = self.button(row, "保存", self.save_results)
         self.save_btn.configure(state=tk.DISABLED)
         self.save_btn.pack(side="left", padx=(10, 0))
+        self.robots_check = tk.Checkbutton(
+            row, text="遵守 robots.txt", variable=self.respect_robots,
+            bg=self.C["panel"], fg=self.C["muted"], activebackground=self.C["panel"],
+            activeforeground=self.C["ink"], selectcolor=self.C["panel"],
+            font=("Helvetica", 12), cursor="hand2", bd=0, highlightthickness=0)
+        self.robots_check.pack(side="right")
 
     def preview_panel(self, parent):
         panel = tk.Frame(parent, bg=self.C["alt"], width=310, highlightbackground=self.C["line"], highlightthickness=1)
@@ -270,11 +278,11 @@ class CrawlerApp(tk.Frame):
         self.render_media_preview([], [])
         self.set_busy(True, "正在抓取")
         self.show("概览")
-        threading.Thread(target=self.worker, args=(url,), daemon=True).start()
+        threading.Thread(target=self.worker, args=(url, self.respect_robots.get()), daemon=True).start()
 
-    def worker(self, url):
+    def worker(self, url, respect_robots):
         try:
-            self.q.put(("ok", fetch_url(url)))
+            self.q.put(("ok", fetch_url(url, respect_robots=respect_robots)))
         except Exception as err:
             self.q.put(("err", str(err)))
 
@@ -403,7 +411,7 @@ class CrawlerApp(tk.Frame):
             card.bind("<Button-1>", lambda _e, u=url: self.confirm_download(u))
 
             if kind == "image":
-                thumb = tk.Label(card, text="正在加载图片预览...", bg="#fff4e8", fg=self.C["muted"],
+                thumb = tk.Label(card, text="正在加载图片预览...", bg=self.C["alt"], fg=self.C["muted"],
                                  height=7, wraplength=245, justify="center", cursor="hand2")
                 thumb.pack(fill="x", padx=10, pady=(10, 7))
                 thumb.bind("<Button-1>", lambda _e, u=url: self.confirm_download(u))
