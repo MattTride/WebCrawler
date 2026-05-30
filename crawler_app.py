@@ -215,6 +215,7 @@ class CrawlerApp(tk.Frame):
         tools.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         self.button(tools, "复制选中地址", lambda n=name: self.copy_url(n)).pack(side="left")
         self.button(tools, "打开选中地址", lambda n=name: self.open_url(n)).pack(side="left", padx=(8, 0))
+        self.button(tools, "复制全部", lambda n=name: self.copy_all(n)).pack(side="left", padx=(8, 0))
         if name in {"图片", "视频"}:
             self.button(tools, "下载选中资源", lambda n=name: self.download_selected(n)).pack(side="left", padx=(8, 0))
         box = tk.Listbox(frame, selectmode=tk.BROWSE, relief="flat", bd=0, font=("Helvetica", 14),
@@ -302,7 +303,7 @@ class CrawlerApp(tk.Frame):
             messagebox.showwarning(APP_NAME, str(err))
             return
         self.write_url(url)
-        self.status.set("正在获取原始响应")
+        self.set_busy(True, "正在获取原始响应")
         threading.Thread(target=self.raw_worker, args=(url, self.respect_robots.get()), daemon=True).start()
 
     def raw_worker(self, url, respect_robots):
@@ -349,10 +350,10 @@ class CrawlerApp(tk.Frame):
             elif kind == "preview_error":
                 self.mark_preview_unavailable(payload)
             elif kind == "raw_ok":
-                self.status.set("原始响应已获取")
+                self.set_busy(False, "原始响应已获取")
                 self.open_raw_window(payload)
             elif kind == "raw_err":
-                self.status.set("获取失败")
+                self.set_busy(False, "获取失败")
                 messagebox.showerror(APP_NAME, f"获取原始响应失败：\n{payload}")
             else:
                 self.show_error(payload)
@@ -409,8 +410,10 @@ class CrawlerApp(tk.Frame):
 
     def set_busy(self, busy: bool, status: str):
         self.status.set(status)
-        self.fetch_btn.configure(text="获取中..." if busy else "获取", state=tk.DISABLED if busy else tk.NORMAL)
-        self.clear_btn.configure(state=tk.DISABLED if busy else tk.NORMAL)
+        state = tk.DISABLED if busy else tk.NORMAL
+        self.fetch_btn.configure(text="获取中..." if busy else "获取", state=state)
+        self.clear_btn.configure(state=state)
+        self.raw_btn.configure(state=state)
 
     def clear_results(self):
         self.result = None
@@ -600,6 +603,19 @@ class CrawlerApp(tk.Frame):
         self.root.clipboard_append(url)
         self.status.set("已复制地址")
 
+    def all_urls(self, name):
+        urls = [item.get("url") or item.get("src") for item in self.records_for(name)]
+        return [u for u in urls if u]
+
+    def copy_all(self, name):
+        urls = self.all_urls(name)
+        if not urls:
+            messagebox.showinfo(APP_NAME, "当前列表为空。")
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append("\n".join(urls))
+        self.status.set(f"已复制全部 {len(urls)} 条地址")
+
     def open_url(self, name):
         url = self.selected_url(name)
         if not url:
@@ -619,9 +635,12 @@ class CrawlerApp(tk.Frame):
         if messagebox.askyesno(APP_NAME, f"要下载这个资源吗？\n\n{self.shorten(url, 90)}"):
             self.choose_download_path(url)
 
-    def choose_download_path(self, url):
+    def default_save_dir(self):
         downloads = Path.home() / "Downloads"
-        initialdir = downloads if downloads.exists() else Path.cwd()
+        return downloads if downloads.exists() else Path.home()
+
+    def choose_download_path(self, url):
+        initialdir = self.default_save_dir()
         path = filedialog.asksaveasfilename(
             title="保存资源",
             initialdir=str(initialdir),
@@ -646,7 +665,7 @@ class CrawlerApp(tk.Frame):
             return
         path = filedialog.asksaveasfilename(
             title="保存抓取结果",
-            initialdir=str(Path.cwd()),
+            initialdir=str(self.default_save_dir()),
             initialfile=f"crawler-result-{time.strftime('%Y%m%d-%H%M%S')}.json",
             defaultextension=".json",
             filetypes=(("JSON 文件", "*.json"), ("Markdown 文件", "*.md"), ("所有文件", "*.*")),
