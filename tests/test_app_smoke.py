@@ -27,6 +27,9 @@ def test_app_constructs_and_realizes(tmp_path):
 
         app.fill_list("链接", [{"text": "a", "url": "u1"}, {"text": "b", "url": "u2"}])
         assert app.all_urls("链接") == ["u1", "u2"]
+        app.filter_vars["链接"].set("b")
+        assert app.visible_records("链接") == [{"text": "b", "url": "u2"}]
+        app.filter_vars["链接"].set("")
 
         app.set_busy(True, "busy")
         assert str(app.raw_btn["state"]) == "disabled"

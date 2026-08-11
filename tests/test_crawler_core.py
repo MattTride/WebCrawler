@@ -6,6 +6,7 @@ import pytest
 import crawler_core
 from crawler_core import (
     PageParser,
+    available_download_path,
     build_link_stats,
     clean,
     dedupe,
@@ -65,6 +66,15 @@ def test_safe_filename_from_url():
     assert safe_filename_from_url("http://x/dir/pic.jpg") == "pic.jpg"
     assert safe_filename_from_url("http://x/") == "media"
     assert len(safe_filename_from_url("http://x/" + "a" * 300 + ".jpg")) <= 120
+
+
+def test_available_download_path_avoids_disk_and_batch_conflicts(tmp_path):
+    (tmp_path / "photo.jpg").write_bytes(b"existing")
+    reserved = set()
+    first = available_download_path(tmp_path, "photo.jpg", reserved)
+    second = available_download_path(tmp_path, "photo.jpg", reserved)
+    assert first.name == "photo-2.jpg"
+    assert second.name == "photo-3.jpg"
 
 
 def test_meta_encoding_reads_charset():

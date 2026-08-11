@@ -95,6 +95,21 @@ def safe_filename_from_url(url: str, fallback: str = "media") -> str:
     return name[:120]
 
 
+def available_download_path(directory: Path, filename: str, reserved: set[Path] | None = None) -> Path:
+    """Return a non-conflicting destination for a download batch."""
+    reserved = reserved if reserved is not None else set()
+    source = Path(filename)
+    stem = source.stem or "media"
+    suffix = source.suffix
+    candidate = directory / f"{stem}{suffix}"
+    number = 2
+    while candidate.exists() or candidate in reserved:
+        candidate = directory / f"{stem}-{number}{suffix}"
+        number += 1
+    reserved.add(candidate)
+    return candidate
+
+
 @dataclass
 class CrawlResult:
     requested_url: str

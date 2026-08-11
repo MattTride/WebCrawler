@@ -15,6 +15,7 @@ import tkinter as tk
 
 from crawler_core import (
     CrawlResult,
+    available_download_path,
     clean,
     download_file,
     fetch_preview_bytes,
@@ -53,6 +54,8 @@ class CrawlerApp(tk.Frame):
         super().__init__(root, bg=self.C["bg"])
         self.root, self.q, self.result = root, queue.Queue(), None
         self.pages, self.tabs, self.lists = {}, {}, {}
+        self.filter_vars: dict[str, tk.StringVar] = {}
+        self.filtered_items: dict[str, list[dict[str, str]]] = {"链接": [], "图片": [], "视频": []}
         self.history_store = HistoryStore(history_path)
         self.history_items: list[dict[str, object]] = []
         self.link_items, self.image_items, self.video_items, self.placeholder = [], [], [], True
@@ -244,7 +247,7 @@ class CrawlerApp(tk.Frame):
 
     def list_page(self, name):
         frame = tk.Frame(self.holder, bg=self.C["panel"])
-        frame.grid_rowconfigure(1, weight=1)
+        frame.grid_rowconfigure(2, weight=1)
         frame.grid_columnconfigure(0, weight=1)
         tools = tk.Frame(frame, bg=self.C["panel"])
         tools.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
@@ -253,14 +256,31 @@ class CrawlerApp(tk.Frame):
         self.button(tools, "复制全部", lambda n=name: self.copy_all(n)).pack(side="left", padx=(8, 0))
         if name in {"图片", "视频"}:
             self.button(tools, "下载选中资源", lambda n=name: self.download_selected(n)).pack(side="left", padx=(8, 0))
-        box = tk.Listbox(frame, selectmode=tk.BROWSE, relief="flat", bd=0, font=("Helvetica", 14),
+            self.button(tools, "批量下载", lambda n=name: self.download_batch(n), primary=True).pack(side="left", padx=(8, 0))
+
+        search = tk.Frame(frame, bg=self.C["alt"], highlightbackground=self.C["line"], highlightthickness=1)
+        search.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        self.label(search, "筛选", size=10, weight="bold", fg=self.C["muted"], bg=self.C["alt"]).pack(side="left", padx=(12, 8), pady=9)
+        variable = tk.StringVar()
+        entry = tk.Entry(
+            search, textvariable=variable, relief="flat", bd=0, font=("Helvetica", 12),
+            bg=self.C["alt"], fg=self.C["ink"], insertbackground=self.C["ink"],
+            highlightthickness=0,
+        )
+        entry.pack(side="left", fill="x", expand=True, padx=(0, 10), pady=8)
+        self.button(search, "重置", lambda v=variable: v.set("")).pack(side="right", padx=(0, 6), pady=4)
+
+        selectmode = tk.EXTENDED if name in {"图片", "视频"} else tk.BROWSE
+        box = tk.Listbox(frame, selectmode=selectmode, relief="flat", bd=0, font=("Helvetica", 14),
                          bg=self.C["alt"], fg=self.C["ink"], selectbackground=self.C["accent_soft"])
         scroll = tk.Scrollbar(frame, orient="vertical", command=box.yview)
         box.configure(yscrollcommand=scroll.set)
-        box.grid(row=1, column=0, sticky="nsew")
-        scroll.grid(row=1, column=1, sticky="ns")
+        box.grid(row=2, column=0, sticky="nsew")
+        scroll.grid(row=2, column=1, sticky="ns")
         box.bind("<Double-Button-1>", lambda _e, n=name: self.open_url(n))
         self.pages[name], self.lists[name] = frame, box
+        self.filter_vars[name] = variable
+        variable.trace_add("write", lambda *_args, n=name: self.apply_filter(n))
 
     def history_page(self):
         frame = tk.Frame(self.holder, bg=self.C["panel"])
@@ -415,6 +435,18 @@ class CrawlerApp(tk.Frame):
             elif kind == "download_err":
                 self.status.set("下载失败")
                 messagebox.showerror(APP_NAME, f"下载失败：\n{payload}")
+            elif kind == "batch_progress":
+                current, total, filename = payload
+                self.status.set(f"批量下载 {current}/{total}：{filename}")
+            elif kind == "batch_done":
+                directory, successes, failures = payload
+                self.status.set(f"批量下载完成：{len(successes)} 个")
+                detail = f"已保存 {len(successes)} 个资源到：\n{directory}"
+                if failures:
+                    detail += f"\n\n{len(failures)} 个资源下载失败。"
+                    messagebox.showwarning(APP_NAME, detail)
+                else:
+                    messagebox.showinfo(APP_NAME, detail)
             elif kind == "preview_image":
                 slot_id, raw = payload
                 self.show_preview_image(slot_id, raw)
@@ -782,22 +814,46 @@ class CrawlerApp(tk.Frame):
     def fill_list(self, name, records):
         target = self.records_for(name)
         target[:] = records
-        box = self.lists[name]
-        box.delete(0, tk.END)
+        self.apply_filter(name)
+
+    def apply_filter(self, name):
+        records = self.records_for(name)
+        query = self.filter_vars[name].get().strip().lower()
         if name == "图片":
             label_key, url_key = "alt", "src"
         else:
             label_key, url_key = "text", "url"
-        for i, item in enumerate(records, 1):
+        visible = [
+            item for item in records
+            if not query or query in f"{item.get(label_key, '')} {item.get(url_key, '')}".lower()
+        ]
+        self.filtered_items[name] = visible
+        box = self.lists[name]
+        box.delete(0, tk.END)
+        for i, item in enumerate(visible, 1):
             box.insert(tk.END, f"{i}. {self.shorten(item.get(label_key) or '无说明', 62)}    {self.shorten(item.get(url_key, ''), 116)}")
+
+    def visible_records(self, name):
+        return self.filtered_items[name]
 
     def selected_url(self, name):
         box = self.lists[name]
         if not box.curselection():
             return None
-        records = self.records_for(name)
+        records = self.visible_records(name)
         item = records[box.curselection()[0]]
         return item.get("url") or item.get("src")
+
+    def selected_urls(self, name):
+        records = self.visible_records(name)
+        urls = []
+        for index in self.lists[name].curselection():
+            if index < len(records):
+                item = records[index]
+                url = item.get("url") or item.get("src")
+                if url:
+                    urls.append(url)
+        return urls
 
     def copy_url(self, name):
         url = self.selected_url(name)
@@ -836,6 +892,24 @@ class CrawlerApp(tk.Frame):
             return
         self.choose_download_path(url)
 
+    def download_batch(self, name):
+        urls = self.selected_urls(name)
+        if not urls:
+            messagebox.showinfo(APP_NAME, "请先选择一个或多个资源。按住 Shift 或 Command 可多选。")
+            return
+        directory = filedialog.askdirectory(
+            title="选择批量下载文件夹",
+            initialdir=str(self.default_save_dir()),
+        )
+        if not directory:
+            return
+        self.status.set(f"准备下载 {len(urls)} 个资源")
+        threading.Thread(
+            target=self.batch_download_worker,
+            args=(urls, Path(directory)),
+            daemon=True,
+        ).start()
+
     def confirm_download(self, url):
         if messagebox.askyesno(APP_NAME, f"要下载这个资源吗？\n\n{self.shorten(url, 90)}"):
             self.choose_download_path(url)
@@ -863,6 +937,23 @@ class CrawlerApp(tk.Frame):
             self.q.put(("download_ok", str(path)))
         except Exception as err:
             self.q.put(("download_err", str(err)))
+
+    def batch_download_worker(self, urls, directory):
+        successes, failures, reserved = [], [], set()
+        for index, url in enumerate(urls, 1):
+            path = available_download_path(
+                directory,
+                safe_filename_from_url(url, f"media-{index}"),
+                reserved,
+            )
+            self.q.put(("batch_progress", (index, len(urls), path.name)))
+            try:
+                download_file(url, path)
+                successes.append(str(path))
+            except Exception as err:
+                path.unlink(missing_ok=True)
+                failures.append({"url": url, "error": str(err)})
+        self.q.put(("batch_done", (str(directory), successes, failures)))
 
     def save_results(self):
         if self.result is None:
