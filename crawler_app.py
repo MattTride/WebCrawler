@@ -39,6 +39,7 @@ class CrawlerApp(tk.Frame):
     PLACEHOLDER = "粘贴或输入网页 URL，例如：https://example.com"
     PAGE_HINTS = {
         "概览": "请求状态、页面结构与核心统计",
+        "页面情报": "SEO 健康度、站点元数据、表单与资源诊断",
         "正文": "服务器返回页面中的可读文本",
         "链接": "页面内外部链接与目标地址",
         "图片": "图片资源、替代文本与下载入口",
@@ -55,7 +56,7 @@ class CrawlerApp(tk.Frame):
         self.status = tk.StringVar(value="等待 URL")
         self.respect_robots = tk.BooleanVar(value=True)
         self.metrics = {k: tk.StringVar(value=v) for k, v in {
-            "链接": "0", "图片": "0", "视频": "0", "标题": "0", "状态": "未抓取",
+            "链接": "0", "图片": "0", "视频": "0", "标题": "0", "SEO": "--", "状态": "未抓取",
         }.items()}
         root.title(APP_NAME)
         root.geometry("1440x900")
@@ -96,7 +97,7 @@ class CrawlerApp(tk.Frame):
         self.label(brand, "网页采集与内容分析工作台", size=10, fg="#AEB7B0", bg=self.C["side"]).pack(anchor="w", pady=(5, 0))
 
         self.label(side, "工作区", size=10, weight="bold", fg="#8F9A92", bg=self.C["side"]).pack(anchor="w", padx=20, pady=(0, 8))
-        for name in ("概览", "正文", "链接", "图片", "视频", "HTML预览"):
+        for name in ("概览", "页面情报", "正文", "链接", "图片", "视频", "HTML预览"):
             btn = tk.Label(
                 side, text=name, anchor="w", padx=18, pady=11,
                 bg=self.C["side"], fg=self.C["side_text"],
@@ -148,6 +149,7 @@ class CrawlerApp(tk.Frame):
         self.holder.pack(fill="both", expand=True, padx=14, pady=(0, 14))
         self.preview_panel(content)
         self.summary = self.text_page("概览")
+        self.intelligence = self.text_page("页面情报")
         self.body = self.text_page("正文")
         self.list_page("链接")
         self.list_page("图片")
@@ -196,7 +198,7 @@ class CrawlerApp(tk.Frame):
     def metrics_strip(self, parent):
         strip = tk.Frame(parent, bg=self.C["bg"])
         strip.pack(fill="x", pady=(0, 10))
-        for i, name in enumerate(("状态", "链接", "图片", "视频", "标题")):
+        for i, name in enumerate(("状态", "SEO", "链接", "图片", "视频", "标题")):
             tile = tk.Frame(strip, bg=self.C["panel"], highlightbackground=self.C["line"], highlightthickness=1)
             tile.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 5, 0))
             strip.grid_columnconfigure(i, weight=1)
@@ -312,6 +314,7 @@ class CrawlerApp(tk.Frame):
         self.result = None
         self.save_btn.configure(state=tk.DISABLED)
         self.set_text(self.summary, "正在准备新的抓取任务...")
+        self.set_text(self.intelligence, "")
         self.set_text(self.body, "")
         self.set_text(self.html, "")
         self.fill_list("链接", [])
@@ -403,6 +406,7 @@ class CrawlerApp(tk.Frame):
         self.set_busy(False, "抓取完成")
         self.save_btn.configure(state=tk.NORMAL)
         self.metrics["状态"].set(str(result.status_code or "完成"))
+        self.metrics["SEO"].set(f"{result.seo_report.get('score', 0)}/100")
         self.metrics["链接"].set(str(len(result.links)))
         self.metrics["图片"].set(str(len(result.images)))
         self.metrics["视频"].set(str(len(result.videos)))
@@ -417,6 +421,8 @@ class CrawlerApp(tk.Frame):
 编码：{result.encoding}
 读取大小：{result.bytes_read:,} bytes
 内容被截断：{"是" if result.truncated else "否"}
+正文字数：{result.word_count:,}
+预计阅读：{result.reading_minutes} 分钟
 链接数量：{len(result.links)}
 图片数量：{len(result.images)}
 视频数量：{len(result.videos)}
@@ -430,6 +436,7 @@ class CrawlerApp(tk.Frame):
 标题结构：
 {headings}
 """)
+        self.set_text(self.intelligence, self.format_intelligence(result))
         self.set_text(self.body, result.text or "未提取到可读正文。")
         self.set_text(self.html, result.html_preview)
         self.fill_list("链接", result.links)
@@ -456,13 +463,14 @@ class CrawlerApp(tk.Frame):
         self.result = None
         self.save_btn.configure(state=tk.DISABLED)
         self.set_text(self.summary, "准备好了。\n\n把网页 URL 粘贴到上方输入框，然后点击“获取”。")
+        self.set_text(self.intelligence, "")
         self.set_text(self.body, "")
         self.set_text(self.html, "")
         self.fill_list("链接", [])
         self.fill_list("图片", [])
         self.fill_list("视频", [])
         self.render_media_preview([], [])
-        for key, value in {"链接": "0", "图片": "0", "视频": "0", "标题": "0", "状态": "未抓取"}.items():
+        for key, value in {"链接": "0", "图片": "0", "视频": "0", "标题": "0", "SEO": "--", "状态": "未抓取"}.items():
             self.metrics[key].set(value)
         self.status.set("等待 URL")
         self.show("概览")
@@ -471,6 +479,71 @@ class CrawlerApp(tk.Frame):
         widget.delete("1.0", tk.END)
         widget.insert("1.0", value)
         widget.see("1.0")
+
+    def format_intelligence(self, result: CrawlResult) -> str:
+        seo = result.seo_report or {}
+        info = result.page_info or {}
+        links = result.link_stats or {}
+        contacts = result.contacts or {}
+        resources = result.resources or {}
+        checks = seo.get("checks", [])
+        passed = sum(1 for check in checks if check.get("passed"))
+
+        lines = [
+            "SEO 健康度",
+            f"{seo.get('score', 0)} / 100  ·  {seo.get('grade', '未评级')}",
+            f"通过检查：{passed} / {len(checks)}",
+            "",
+            "页面身份",
+            f"域名：{info.get('domain') or '未知'}",
+            f"语言：{info.get('language') or '未声明'}",
+            f"站点名称：{info.get('site_name') or '未声明'}",
+            f"页面类型：{info.get('page_type') or '未声明'}",
+            f"作者：{info.get('author') or '未声明'}",
+            f"发布时间：{info.get('published_time') or '未声明'}",
+            f"Canonical：{info.get('canonical') or '未声明'}",
+            f"Robots：{info.get('robots') or '未声明'}",
+            f"生成器：{info.get('generator') or '未声明'}",
+            "",
+            "内容与链接",
+            f"正文字数：{result.word_count:,}",
+            f"预计阅读：{result.reading_minutes} 分钟",
+            f"链接总数：{links.get('total', len(result.links))}",
+            f"内部链接：{links.get('internal', 0)}",
+            f"外部链接：{links.get('external', 0)}",
+            f"HTTPS 链接：{links.get('https', 0)}",
+            f"HTTP 链接：{links.get('http', 0)}",
+            "",
+            "联系方式与表单",
+            f"邮箱：{', '.join(contacts.get('emails', [])) or '未发现'}",
+            f"电话：{', '.join(contacts.get('phones', [])) or '未发现'}",
+            f"表单数量：{len(result.forms)}",
+        ]
+        for index, form in enumerate(result.forms[:20], 1):
+            lines.append(
+                f"  表单 {index}：{form.get('method', 'GET')}  {form.get('action', '')}  "
+                f"字段 {form.get('inputs', 0)} / 密码字段 {form.get('password_fields', 0)}"
+            )
+
+        lines += [
+            "",
+            "页面资源",
+            f"脚本：{len(resources.get('scripts', []))}",
+            f"样式表：{len(resources.get('stylesheets', []))}",
+            f"内嵌框架：{len(resources.get('iframes', []))}",
+            "",
+            "SEO 检查",
+        ]
+        for check in checks:
+            state = "通过" if check.get("passed") else "待优化"
+            lines.append(f"[{state}] {check.get('label', '')}：{check.get('detail', '')}")
+
+        issues = seo.get("issues", [])
+        lines += ["", "优先建议"]
+        lines.extend(f"{index}. {issue}" for index, issue in enumerate(issues, 1))
+        if not issues:
+            lines.append("当前基础 SEO 检查全部通过。")
+        return "\n".join(lines)
 
     def render_media_preview(self, images, videos):
         self.preview_generation += 1
