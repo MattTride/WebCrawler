@@ -1,0 +1,2 @@
+# Pillow provides consistent JPEG/WebP thumbnail support across platforms.
+Pillow>=10.3,<13
