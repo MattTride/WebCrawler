@@ -30,12 +30,21 @@ APP_NAME = "网页爬虫小程序"
 
 class CrawlerApp(tk.Frame):
     C = {
-        "bg": "#F5F4EF", "panel": "#FBFAF7", "alt": "#EFEDE4", "side": "#EEEBE2",
-        "line": "#E2DFD4", "ink": "#2A2722", "muted": "#7C756A",
-        "accent": "#D97757", "accent_dark": "#C15F3C", "accent_soft": "#F0DCD0",
-        "green": "#5B6E61", "input": "#FFFFFF",
+        "bg": "#F1F3F2", "panel": "#FFFFFF", "alt": "#F7F8F7", "side": "#252925",
+        "side_alt": "#323732", "side_text": "#F2F4F1", "line": "#D9DEDB",
+        "ink": "#202521", "muted": "#68716B", "accent": "#D36B47",
+        "accent_dark": "#A84D30", "accent_soft": "#F5E2DB", "green": "#2F6B57",
+        "blue": "#3E6473", "warning": "#9A6726", "input": "#FFFFFF",
     }
     PLACEHOLDER = "粘贴或输入网页 URL，例如：https://example.com"
+    PAGE_HINTS = {
+        "概览": "请求状态、页面结构与核心统计",
+        "正文": "服务器返回页面中的可读文本",
+        "链接": "页面内外部链接与目标地址",
+        "图片": "图片资源、替代文本与下载入口",
+        "视频": "视频源、播放器资源与下载入口",
+        "HTML预览": "服务器返回的原始 HTML 片段",
+    }
 
     def __init__(self, root: tk.Tk):
         super().__init__(root, bg=self.C["bg"])
@@ -49,8 +58,8 @@ class CrawlerApp(tk.Frame):
             "链接": "0", "图片": "0", "视频": "0", "标题": "0", "状态": "未抓取",
         }.items()}
         root.title(APP_NAME)
-        root.geometry("1180x780")
-        root.minsize(960, 660)
+        root.geometry("1440x900")
+        root.minsize(1120, 720)
         root.configure(bg=self.C["bg"])
         self.pack(fill="both", expand=True)
         self.build()
@@ -78,58 +87,65 @@ class CrawlerApp(tk.Frame):
         self.results(work)
 
     def sidebar(self):
-        side = tk.Frame(self, bg=self.C["side"], width=286, highlightbackground=self.C["line"], highlightthickness=1)
+        side = tk.Frame(self, bg=self.C["side"], width=232)
         side.pack(side="left", fill="y")
         side.pack_propagate(False)
-        self.label(side, "Crawl Studio", size=23, weight="bold", bg=self.C["side"]).pack(anchor="w", padx=24, pady=(28, 4))
-        self.label(side, "像对话一样抓取网页", size=12, fg=self.C["muted"], bg=self.C["side"]).pack(anchor="w", padx=24)
-        note = tk.Frame(side, bg=self.C["panel"], highlightbackground=self.C["line"], highlightthickness=1)
-        note.pack(fill="x", padx=20, pady=(30, 18))
-        self.label(note, "当前任务", size=12, weight="bold", bg=self.C["panel"]).pack(anchor="w", padx=14, pady=(12, 3))
-        self.label(note, "输入 URL 后，我会提取标题、正文、链接、图片、视频和 HTML 预览。", size=12, fg=self.C["muted"], bg=self.C["panel"]).pack(fill="x", padx=14, pady=(0, 14))
-        grid = tk.Frame(side, bg=self.C["side"])
-        grid.pack(fill="x", padx=20)
-        for i, name in enumerate(("链接", "图片", "视频", "标题", "状态")):
-            card = tk.Frame(grid, bg=self.C["panel"], highlightbackground=self.C["line"], highlightthickness=1)
-            card.grid(row=i // 2, column=i % 2, sticky="nsew", padx=4, pady=4)
-            grid.grid_columnconfigure(i % 2, weight=1)
-            self.label(card, name, size=11, fg=self.C["muted"], bg=self.C["panel"]).pack(anchor="w", padx=12, pady=(10, 0))
-            self.label(card, var=self.metrics[name], size=18, weight="bold", bg=self.C["panel"]).pack(anchor="w", padx=12, pady=(0, 10))
+        brand = tk.Frame(side, bg=self.C["side"])
+        brand.pack(fill="x", padx=20, pady=(24, 26))
+        self.label(brand, "CRAWL STUDIO", size=18, weight="bold", fg=self.C["side_text"], bg=self.C["side"]).pack(anchor="w")
+        self.label(brand, "网页采集与内容分析工作台", size=10, fg="#AEB7B0", bg=self.C["side"]).pack(anchor="w", pady=(5, 0))
+
+        self.label(side, "工作区", size=10, weight="bold", fg="#8F9A92", bg=self.C["side"]).pack(anchor="w", padx=20, pady=(0, 8))
+        for name in ("概览", "正文", "链接", "图片", "视频", "HTML预览"):
+            btn = tk.Label(
+                side, text=name, anchor="w", padx=18, pady=11,
+                bg=self.C["side"], fg=self.C["side_text"],
+                font=("Helvetica", 12, "bold"), cursor="hand2",
+            )
+            btn.pack(fill="x", padx=10, pady=1)
+            btn.bind("<Button-1>", lambda _e, n=name: self.show(n))
+            btn.bind("<Enter>", lambda _e, n=name: self.nav_hover(n, True))
+            btn.bind("<Leave>", lambda _e, n=name: self.nav_hover(n, False))
+            self.tabs[name] = btn
+
+        spacer = tk.Frame(side, bg=self.C["side"])
+        spacer.pack(fill="both", expand=True)
+        footer = tk.Frame(side, bg=self.C["side_alt"], highlightbackground="#3C433D", highlightthickness=1)
+        footer.pack(fill="x", padx=14, pady=14)
+        self.label(footer, "运行状态", size=10, weight="bold", fg="#AEB7B0", bg=self.C["side_alt"]).pack(anchor="w", padx=12, pady=(11, 3))
+        self.label(footer, var=self.status, size=12, weight="bold", fg=self.C["side_text"], bg=self.C["side_alt"]).pack(anchor="w", padx=12, pady=(0, 11))
 
     def topbar(self, parent):
         bar = tk.Frame(parent, bg=self.C["bg"])
-        bar.pack(fill="x", padx=28, pady=(26, 16))
+        bar.pack(fill="x", padx=24, pady=(20, 14))
         left = tk.Frame(bar, bg=self.C["bg"])
         left.pack(side="left", fill="x", expand=True)
-        self.label(left, APP_NAME, size=25, weight="bold").pack(anchor="w")
-        self.label(left, "把一个网页变成结构化信息：摘要、正文、链接、图片、视频，一次看清。", size=13, fg=self.C["muted"]).pack(anchor="w", pady=(4, 0))
-        badge = tk.Frame(bar, bg=self.C["panel"], highlightbackground=self.C["line"], highlightthickness=1)
-        badge.pack(side="right")
-        self.label(badge, var=self.status, size=12, weight="bold", fg=self.C["green"], bg=self.C["panel"]).pack(padx=14, pady=8)
+        self.label(left, "网页采集工作台", size=23, weight="bold").pack(anchor="w")
+        self.label(left, "单页抓取、媒体提取、源代码检查与结构化导出", size=11, fg=self.C["muted"]).pack(anchor="w", pady=(4, 0))
+        badge = tk.Frame(bar, bg="#E6F0EB", highlightbackground="#C8D9D0", highlightthickness=1)
+        badge.pack(side="right", padx=(12, 0))
+        self.label(badge, var=self.status, size=11, weight="bold", fg=self.C["green"], bg="#E6F0EB").pack(padx=13, pady=8)
 
     def results(self, parent):
-        panel = tk.Frame(parent, bg=self.C["panel"], highlightbackground=self.C["line"], highlightthickness=1)
-        panel.pack(fill="both", expand=True, padx=28, pady=(0, 24))
-        head = tk.Frame(panel, bg=self.C["panel"])
-        head.pack(fill="x", padx=18, pady=(16, 8))
-        self.label(head, "抓取结果", size=17, weight="bold", bg=self.C["panel"]).pack(side="left")
-        self.label(head, "结果会出现在这里", size=12, fg=self.C["muted"], bg=self.C["panel"]).pack(side="left", padx=(10, 0))
-        tabs = tk.Frame(panel, bg=self.C["panel"])
-        tabs.pack(fill="x", padx=14, pady=(0, 10))
-        for name in ("概览", "正文", "链接", "图片", "视频", "HTML预览"):
-            btn = tk.Button(tabs, text=name, command=lambda n=name: self.show(n), relief="flat", bd=0, padx=16, pady=9,
-                            bg=self.C["alt"], fg=self.C["muted"], activebackground=self.C["accent_soft"],
-                            font=("Helvetica", 13, "bold"), cursor="hand2")
-            btn.pack(side="left", padx=(0, 8))
-            self.tabs[name] = btn
+        panel = tk.Frame(parent, bg=self.C["bg"])
+        panel.pack(fill="both", expand=True, padx=24, pady=(0, 22))
         self.inline_composer(panel)
-        content = tk.Frame(panel, bg=self.C["panel"])
-        content.pack(fill="both", expand=True, padx=14, pady=(0, 14))
+        self.metrics_strip(panel)
+        content = tk.Frame(panel, bg=self.C["bg"])
+        content.pack(fill="both", expand=True)
         content.grid_columnconfigure(0, weight=1)
         content.grid_columnconfigure(1, weight=0)
         content.grid_rowconfigure(0, weight=1)
-        self.holder = tk.Frame(content, bg=self.C["panel"])
-        self.holder.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        main = tk.Frame(content, bg=self.C["panel"], highlightbackground=self.C["line"], highlightthickness=1)
+        main.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        page_head = tk.Frame(main, bg=self.C["panel"])
+        page_head.pack(fill="x", padx=18, pady=(15, 10))
+        self.page_title = tk.StringVar(value="概览")
+        self.page_hint = tk.StringVar(value=self.PAGE_HINTS["概览"])
+        self.label(page_head, var=self.page_title, size=16, weight="bold", bg=self.C["panel"]).pack(side="left")
+        self.label(page_head, var=self.page_hint, size=10, fg=self.C["muted"], bg=self.C["panel"]).pack(side="left", padx=(10, 0), pady=(4, 0))
+        self.holder = tk.Frame(main, bg=self.C["panel"])
+        self.holder.pack(fill="both", expand=True, padx=14, pady=(0, 14))
         self.preview_panel(content)
         self.summary = self.text_page("概览")
         self.body = self.text_page("正文")
@@ -143,25 +159,26 @@ class CrawlerApp(tk.Frame):
 
     def inline_composer(self, parent):
         box = tk.Frame(parent, bg=self.C["panel"], highlightbackground=self.C["line"], highlightthickness=1)
-        box.pack(fill="x", padx=14, pady=(0, 14))
+        box.pack(fill="x", pady=(0, 10))
         top = tk.Frame(box, bg=self.C["panel"])
-        top.pack(fill="x", padx=16, pady=(12, 6))
-        self.label(top, "将 URL 输入⬇️", size=14, weight="bold", fg=self.C["accent_dark"], bg=self.C["panel"]).pack(side="left")
+        top.pack(fill="x", padx=16, pady=(12, 7))
+        self.label(top, "目标网址", size=12, weight="bold", bg=self.C["panel"]).pack(side="left")
+        self.label(top, "输入后按回车或点击获取", size=10, fg=self.C["muted"], bg=self.C["panel"]).pack(side="left", padx=(9, 0))
         body = tk.Frame(box, bg=self.C["panel"])
-        body.pack(fill="x", padx=16, pady=(0, 14))
-        self.url = tk.Text(body, height=2, wrap="word", relief="flat", bd=0, padx=14, pady=12,
-                           font=("Helvetica", 16), bg=self.C["input"], fg=self.C["muted"],
-                           insertbackground=self.C["ink"], highlightthickness=2,
-                           highlightbackground=self.C["accent_soft"], highlightcolor=self.C["accent"])
-        self.url.pack(side="left", fill="x", expand=True, padx=(0, 12))
+        body.pack(fill="x", padx=16, pady=(0, 10))
+        self.url = tk.Text(body, height=1, wrap="word", relief="flat", bd=0, padx=13, pady=11,
+                           font=("Helvetica", 14), bg=self.C["input"], fg=self.C["muted"],
+                           insertbackground=self.C["ink"], highlightthickness=1,
+                           highlightbackground=self.C["line"], highlightcolor=self.C["accent"])
+        self.url.pack(fill="x", expand=True)
         self.url.insert("1.0", self.PLACEHOLDER)
         self.url.bind("<FocusIn>", self.clear_placeholder)
         self.url.bind("<FocusOut>", self.restore_placeholder)
         self.url.bind("<Return>", self.key_fetch)
         row = tk.Frame(box, bg=self.C["panel"])
-        row.pack(fill="x", padx=16, pady=(0, 14))
+        row.pack(fill="x", padx=16, pady=(0, 12))
         self.fetch_btn = self.button(row, "获取", self.start_fetch, True)
-        self.fetch_btn.pack(side="left", ipadx=34)
+        self.fetch_btn.pack(side="left", ipadx=28)
         self.clear_btn = self.button(row, "清空", self.clear_results)
         self.clear_btn.pack(side="left", padx=(10, 0))
         self.save_btn = self.button(row, "保存", self.save_results)
@@ -176,18 +193,29 @@ class CrawlerApp(tk.Frame):
             font=("Helvetica", 12), cursor="hand2", bd=0, highlightthickness=0)
         self.robots_check.pack(side="right")
 
+    def metrics_strip(self, parent):
+        strip = tk.Frame(parent, bg=self.C["bg"])
+        strip.pack(fill="x", pady=(0, 10))
+        for i, name in enumerate(("状态", "链接", "图片", "视频", "标题")):
+            tile = tk.Frame(strip, bg=self.C["panel"], highlightbackground=self.C["line"], highlightthickness=1)
+            tile.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 5, 0))
+            strip.grid_columnconfigure(i, weight=1)
+            self.label(tile, name, size=9, weight="bold", fg=self.C["muted"], bg=self.C["panel"]).pack(anchor="w", padx=12, pady=(9, 2))
+            color = self.C["green"] if name == "状态" else self.C["ink"]
+            self.label(tile, var=self.metrics[name], size=15, weight="bold", fg=color, bg=self.C["panel"]).pack(anchor="w", padx=12, pady=(0, 9))
+
     def preview_panel(self, parent):
-        panel = tk.Frame(parent, bg=self.C["alt"], width=310, highlightbackground=self.C["line"], highlightthickness=1)
+        panel = tk.Frame(parent, bg=self.C["panel"], width=326, highlightbackground=self.C["line"], highlightthickness=1)
         panel.grid(row=0, column=1, sticky="ns")
         panel.grid_propagate(False)
-        self.label(panel, "媒体预览", size=15, weight="bold", bg=self.C["alt"]).pack(anchor="w", padx=14, pady=(14, 2))
-        self.label(panel, "图片会自动显示；点卡片即可下载。", size=11, fg=self.C["muted"], bg=self.C["alt"]).pack(anchor="w", padx=14, pady=(0, 10))
-        canvas = tk.Canvas(panel, bg=self.C["alt"], bd=0, highlightthickness=0)
+        self.label(panel, "媒体检查器", size=15, weight="bold", bg=self.C["panel"]).pack(anchor="w", padx=14, pady=(14, 2))
+        self.label(panel, "图片直接预览，点击资源选择下载", size=10, fg=self.C["muted"], bg=self.C["panel"]).pack(anchor="w", padx=14, pady=(0, 10))
+        canvas = tk.Canvas(panel, bg=self.C["panel"], bd=0, highlightthickness=0)
         scroll = tk.Scrollbar(panel, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=scroll.set)
         canvas.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=(0, 12))
         scroll.pack(side="right", fill="y", pady=(0, 12))
-        self.preview_inner = tk.Frame(canvas, bg=self.C["alt"])
+        self.preview_inner = tk.Frame(canvas, bg=self.C["panel"])
         window = canvas.create_window((0, 0), window=self.preview_inner, anchor="nw")
         self.preview_canvas = canvas
         self.preview_inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
@@ -228,11 +256,20 @@ class CrawlerApp(tk.Frame):
         self.pages[name], self.lists[name] = frame, box
 
     def show(self, name):
+        self.active_page = name
         for key, page in self.pages.items():
             page.pack_forget()
-            self.tabs[key].configure(bg=self.C["accent_soft"] if key == name else self.C["alt"],
-                                     fg=self.C["ink"] if key == name else self.C["muted"])
+            self.tabs[key].configure(
+                bg=self.C["accent"] if key == name else self.C["side"],
+                fg="#FFFFFF" if key == name else self.C["side_text"],
+            )
+        self.page_title.set(name)
+        self.page_hint.set(self.PAGE_HINTS.get(name, ""))
         self.pages[name].pack(fill="both", expand=True)
+
+    def nav_hover(self, name, entering):
+        if getattr(self, "active_page", "概览") != name:
+            self.tabs[name].configure(bg=self.C["side_alt"] if entering else self.C["side"])
 
     def clear_placeholder(self, _e=None):
         if self.placeholder:
