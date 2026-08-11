@@ -1,2 +1,2 @@
-# Development-only dependencies. The app itself needs no third-party packages.
-pytest
+-r requirements.txt
+pytest>=8,<9

@@ -53,8 +53,11 @@ app = BUNDLE(
     info_plist={
         'CFBundleName': '网页爬虫小程序',
         'CFBundleDisplayName': 'WebCrawler',
-        'CFBundleShortVersionString': '1.0.0',
-        'CFBundleVersion': '1.0.0',
+        'CFBundleShortVersionString': '2.0.0',
+        'CFBundleVersion': '2.0.0',
+        'CFBundleDevelopmentRegion': 'zh_CN',
+        'LSApplicationCategoryType': 'public.app-category.utilities',
+        'NSHumanReadableCopyright': 'Copyright © 2026 Tride. MIT License.',
         'NSHighResolutionCapable': True,
     },
 )

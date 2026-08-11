@@ -1,4 +1,6 @@
 """Unit tests for crawler_core: the tkinter-free fetch/parse logic."""
+import csv
+import io
 import urllib.error
 
 import pytest
@@ -6,8 +8,11 @@ import pytest
 import crawler_core
 from crawler_core import (
     PageParser,
+    available_download_path,
+    build_link_stats,
     clean,
     dedupe,
+    estimate_word_count,
     fetch_url,
     first_srcset_url,
     looks_like_video,
@@ -65,33 +70,70 @@ def test_safe_filename_from_url():
     assert len(safe_filename_from_url("http://x/" + "a" * 300 + ".jpg")) <= 120
 
 
+def test_available_download_path_avoids_disk_and_batch_conflicts(tmp_path):
+    (tmp_path / "photo.jpg").write_bytes(b"existing")
+    reserved = set()
+    first = available_download_path(tmp_path, "photo.jpg", reserved)
+    second = available_download_path(tmp_path, "photo.jpg", reserved)
+    assert first.name == "photo-2.jpg"
+    assert second.name == "photo-3.jpg"
+
+
 def test_meta_encoding_reads_charset():
     assert meta_encoding(b'<meta charset="gbk">') == "gbk"
     assert meta_encoding(b"<html><body>no charset</body></html>") is None
 
 
+def test_estimate_word_count_handles_mixed_chinese_and_latin_text():
+    assert estimate_word_count("你好 Codex studio-2") == 4
+
+
+def test_build_link_stats_separates_internal_external_and_protocols():
+    links = [
+        {"url": "https://example.com/a"},
+        {"url": "http://example.com/b"},
+        {"url": "https://other.com/c"},
+    ]
+    assert build_link_stats(links, "https://example.com/") == {
+        "total": 3, "internal": 2, "external": 1, "https": 2, "http": 1,
+    }
+
+
 # --- PageParser ------------------------------------------------------------
 
 SAMPLE_HTML = '''
-<html><head>
+<html lang="zh-CN"><head>
   <title>  Test  Page </title>
   <meta name="description" content="A sample description.">
+  <meta name="author" content="Crawl Team">
+  <meta name="keywords" content="crawler, analysis">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta property="og:site_name" content="Example Studio">
+  <meta property="og:type" content="article">
+  <meta property="article:published_time" content="2026-08-01">
   <meta property="og:image" content="https://cdn.example.com/og.png">
+  <link rel="canonical" href="/canonical">
+  <link rel="stylesheet" href="/assets/site.css">
 </head><body>
   <h1>Main Heading</h1>
   <h2>Sub</h2>
   <p>Hello <b>world</b>.</p>
-  <script>var secretscript = 1;</script>
+  <script src="/assets/app.js">var secretscript = 1;</script>
   <style>.box{color:tomato}</style>
   <a href="/about">About</a>
   <a href="https://other.com/x">External</a>
   <a href="javascript:void(0)">JS</a>
   <a href="mailto:a@b.com">Mail</a>
+  <a href="tel:+65-6123-4567">Call</a>
   <img src="/img/a.png" alt="Pic A">
   <img data-src="/img/lazy.png" alt="Lazy">
   <img srcset="/img/s1.png 1x, /img/s2.png 2x" alt="Srcset">
   <video src="/media/clip.mp4" poster="/media/poster.jpg"></video>
   <a href="/files/movie.webm">Download movie</a>
+  <iframe src="/embed/demo"></iframe>
+  <form action="/login" method="post">
+    <input name="user"><input type="password" name="password"><textarea name="note"></textarea>
+  </form>
 </body></html>
 '''
 
@@ -146,6 +188,26 @@ def test_parser_body_text_excludes_script_and_style(parsed):
     assert "tomato" not in text
 
 
+def test_parser_collects_metadata_resources_contacts_and_forms(parsed):
+    assert parsed.language == "zh-CN"
+    assert parsed.canonical == "https://example.com/canonical"
+    assert parsed.metadata["author"] == "Crawl Team"
+    assert parsed.metadata["og:site_name"] == "Example Studio"
+    assert parsed.resources == {
+        "scripts": ["https://example.com/assets/app.js"],
+        "stylesheets": ["https://example.com/assets/site.css"],
+        "iframes": ["https://example.com/embed/demo"],
+    }
+    assert parsed.contacts["emails"] == ["a@b.com"]
+    assert parsed.contacts["phones"] == ["+65-6123-4567"]
+    assert parsed.forms == [{
+        "action": "https://example.com/login",
+        "method": "POST",
+        "inputs": 3,
+        "password_fields": 1,
+    }]
+
+
 # --- fetch_url (network mocked) -------------------------------------------
 
 class _FakeHeaders:
@@ -191,6 +253,12 @@ def test_fetch_url_decodes_and_parses(monkeypatch):
     assert result.truncated is False
     assert result.bytes_read == len(body)
     assert any(link["url"] == "https://example.com/x" for link in result.links)
+    assert result.word_count == 1
+    assert result.reading_minutes == 1
+    assert result.page_info["domain"] == "example.com"
+    assert result.link_stats["internal"] == 1
+    assert result.seo_report["score"] >= 0
+    assert len(result.seo_report["checks"]) == 9
 
 
 # --- robots.txt and retries ------------------------------------------------
@@ -263,6 +331,10 @@ def test_result_to_markdown_renders_sections():
         text="Body text here.",
         html_preview="<html>", bytes_read=123, truncated=False,
         fetched_at="2026-05-30 10:00:00",
+        word_count=3, reading_minutes=1,
+        page_info={"domain": "example.com", "language": "zh-CN", "canonical": "https://example.com/"},
+        link_stats={"internal": 1, "external": 0},
+        seo_report={"score": 88, "grade": "优秀", "issues": [], "checks": []},
     )
     md = crawler_core.result_to_markdown(result)
     assert md.startswith("# My Page")
@@ -273,6 +345,45 @@ def test_result_to_markdown_renders_sections():
     assert "![Logo](https://example.com/logo.png)" in md        # image syntax
     assert "[Clip](https://example.com/clip.mp4)" in md
     assert "## 正文" in md and "Body text here." in md
+    assert "SEO 健康度：88 / 100" in md
+    assert "正文字数：3" in md
+
+
+def test_result_to_html_escapes_content_and_renders_report():
+    result = crawler_core.CrawlResult(
+        requested_url="https://example.com", final_url="https://example.com",
+        status_code=200, reason="OK", content_type="text/html", encoding="utf-8",
+        title="A <Title>", description="Description & details", headings=[],
+        links=[{"text": "Docs", "url": "https://example.com/?a=1&b=2"}],
+        images=[{"alt": "Cover", "src": "https://example.com/cover.jpg"}],
+        videos=[], text="Body <script>alert(1)</script>", html_preview="", bytes_read=1,
+        truncated=False, fetched_at="2026-08-11", word_count=2,
+        page_info={"domain": "example.com"}, seo_report={"score": 75, "grade": "良好", "issues": ["补充描述"]},
+    )
+    report = crawler_core.result_to_html(result)
+    assert "<!doctype html>" in report
+    assert "A &lt;Title&gt;" in report
+    assert "<script>alert(1)</script>" not in report
+    assert "Body &lt;script&gt;alert(1)&lt;/script&gt;" in report
+    assert "75/100" in report
+
+
+def test_result_to_csv_writes_resource_manifest():
+    result = crawler_core.CrawlResult(
+        requested_url="https://example.com", final_url="https://example.com",
+        status_code=200, reason="OK", content_type="text/html", encoding="utf-8",
+        title="Page, with comma", description="", headings=[],
+        links=[{"text": "Home", "url": "https://example.com/home"}],
+        images=[], videos=[], text="", html_preview="", bytes_read=1,
+        truncated=False, fetched_at="2026-08-11",
+        forms=[{"action": "https://example.com/login", "method": "POST", "inputs": 2, "password_fields": 1}],
+        resources={"scripts": ["https://example.com/app.js"]},
+    )
+    rows = list(csv.reader(io.StringIO(crawler_core.result_to_csv(result))))
+    assert rows[0] == ["category", "index", "label", "url_or_value", "details"]
+    assert ["link", "1", "Home", "https://example.com/home", ""] in rows
+    assert any(row[0] == "form" and row[3].endswith("/login") for row in rows)
+    assert any(row[0] == "script" and row[3].endswith("app.js") for row in rows)
 
 
 # --- raw server response ---------------------------------------------------

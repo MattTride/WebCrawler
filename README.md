@@ -1,183 +1,220 @@
-# 网页爬虫小程序
+# Crawl Studio
 
-一个用 Python 编写的桌面网页爬虫应用。它提供类似 Claude 工作台的浅色界面：左侧显示抓取状态，中间展示结果，上方固定一个醒目的 URL 输入框。用户输入网页地址后，应用会抓取单个页面并提取标题、描述、正文、链接、图片、视频和 HTML 预览。
+一个面向日常网页检查与内容采集的 Python 桌面应用。输入单个 URL，Crawl Studio 会在同一个工作台中呈现页面概览、SEO 情报、正文、链接、图片、视频、原始 HTML 和本地任务历史，并支持媒体下载与结构化报告导出。
 
-## 下载
+[![Tests](https://github.com/MattTride/WebCrawler/actions/workflows/tests.yml/badge.svg)](https://github.com/MattTride/WebCrawler/actions/workflows/tests.yml)
+[![Latest release](https://img.shields.io/github/v/release/MattTride/WebCrawler)](https://github.com/MattTride/WebCrawler/releases/latest)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-根据操作系统点击下载（链接指向最新 Release，会自动跳转到对应安装包）：
+## 下载桌面版
 
 [![Download for macOS](https://img.shields.io/badge/Download-macOS-111111?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/MattTride/WebCrawler/releases/latest/download/WebCrawler-macOS.zip)
 [![Download for Windows](https://img.shields.io/badge/Download-Windows-0067b8?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/MattTride/WebCrawler/releases/latest/download/WebCrawler-Windows.zip)
 
-- **macOS**：[下载 WebCrawler-macOS.zip](https://github.com/MattTride/WebCrawler/releases/latest/download/WebCrawler-macOS.zip)。解压后双击 `WebCrawler.app`；若提示“来自未识别的开发者”，右键点图标选“打开”。
-- **Windows**：[下载 WebCrawler-Windows.zip](https://github.com/MattTride/WebCrawler/releases/latest/download/WebCrawler-Windows.zip)。解压后双击 `WebCrawler.exe`；若 SmartScreen 拦截，点“更多信息”→“仍要运行”。
+- **macOS**：解压后把 `WebCrawler.app` 拖入“应用程序”，右键应用并选择“打开”。
+- **Windows**：解压后运行 `WebCrawler.exe`。若 SmartScreen 提示未知发布者，选择“更多信息”后再决定是否运行。
+- **源码运行**：适合开发者，也可在 macOS 双击 `run_crawler.command`。
 
-> 安装包由 GitHub Actions 在推送 `v*` 版本标签时自动在 macOS / Windows 机器上构建（见 [`.github/workflows/release.yml`](.github/workflows/release.yml)），二进制不提交进仓库。首个 Release 生成后，上述链接即生效。
+安装包由 GitHub Actions 在 `v*` 标签发布时分别在 macOS 和 Windows 环境中构建。每个压缩包旁会附带 `.sha256` 校验文件。
 
-## 项目特点
+## 核心能力
 
-- 独立桌面界面，使用 Python 标准库 `tkinter` 构建。
-- 不依赖第三方运行库，普通 Python 环境即可运行。
-- 上方大 URL 输入框，支持直接粘贴网页地址。
-- 自动补全缺省的 `https://`。
-- 抓取结果分为概览、正文、链接、图片、视频、HTML 预览六个区域。
-- 链接、图片和视频地址支持复制单条、一键复制全部、双击打开。
-- 右侧媒体预览会直接展示图片和视频资源卡片，图片不需要进入列表也能看到。
-- 图片和视频支持从预览卡片或列表中下载到本地。
-- 支持将抓取结果保存为 JSON 或 Markdown 文件。
-- 网络请求在后台线程执行，界面不会在抓取时卡死。
-- 默认只抓取用户输入的单个页面，避免对目标网站造成压力。
-- 抓取前自动检查目标站点的 robots.txt，默认遵守，可在界面上关闭。
-- 遇到超时或连接失败会自动重试，并给出清晰的中文错误提示。
-- 可一键查看服务器“原始响应”（状态行、响应头、原始正文），方便排查 JS 渲染或异常返回。
+### 集成式采集工作台
 
-## 界面结构
+- URL 命令栏固定在首屏，支持自动补全 `https://`、回车获取和一键清空。
+- 顶部同时展示请求状态、SEO 分数、链接、图片、视频和标题数量。
+- 左侧工作区统一导航概览、页面情报、正文、链接、图片、视频、HTML 预览和历史记录。
+- 网络抓取、图片预览和资源下载都在后台线程运行，主界面保持响应。
+- 可查看服务器原始响应，包括 HTTP 状态行、响应头和服务器返回的正文。
 
-应用界面分为三块：
+### 页面情报与 SEO
 
-- 左侧状态栏：显示当前任务说明，以及链接、图片、视频、标题、状态等统计信息。
-- 中央结果区：使用标签页展示抓取结果，并在右侧显示媒体预览。
-- 上方输入区：固定显示“将 URL 输入⬇️”输入框，输入框下方有醒目的“获取”按钮。
+- 估算中英文混合正文的字数与阅读时间。
+- 区分内部链接、外部链接、HTTP 与 HTTPS 链接。
+- 提取语言、canonical、作者、关键词、发布时间、站点名称、页面类型、robots 和生成器信息。
+- 发现页面中的邮箱、电话、表单、密码字段、脚本、样式表和 iframe。
+- 对标题长度、description、唯一 H1、canonical、语言、viewport、图片 alt、HTTPS 和 noindex 进行基础评分。
+- 在“页面情报”中直接给出通过项与优先优化建议。
 
-## 运行要求
+### 媒体与资源
 
-- macOS、Windows 或 Linux。
-- Python 3.9 及以上版本。
-- Python 需要包含 `tkinter`。macOS 系统自带 Python 或 Homebrew Python 通常都可以使用。
+- 提取 `img`、懒加载属性、`srcset`、Open Graph 图片和视频封面。
+- 提取 `video`、`source`、视频 meta、iframe 播放地址和直接视频文件链接。
+- 图片会在右侧媒体检查器中生成缩略图，不必先打开资源地址。
+- 图片与视频列表支持实时搜索、多选和批量下载。
+- 批量下载自动为同名文件添加编号，并隔离单个失败资源。
 
-本项目运行时不需要安装 `requests`、`beautifulsoup4` 等第三方库。
+### 历史与导出
+
+- 最近 50 次抓取摘要保存在本机 `~/.crawl_studio/history.json`。
+- 历史记录支持双击再次抓取、复制网址、删除单条和清空全部。
+- 历史只记录任务摘要，不保存网页正文、HTML 或媒体文件。
+- 可导出 JSON 原始数据、Markdown 报告、HTML 可视报告和 CSV 资源清单。
+- CSV 使用带 BOM 的 UTF-8 编码，可直接在 Excel 中打开中文内容。
 
 ## 快速开始
 
-在项目目录中运行：
+### 1. 获取源码
 
 ```bash
-python3 crawler_app.py
+git clone https://github.com/MattTride/WebCrawler.git
+cd WebCrawler
 ```
 
-不想装 Python？用打包好的桌面版，见上面的 [下载](#下载)（macOS / Windows）。macOS 也可以双击备用启动脚本 `run_crawler.command` 从源码启动。
+### 2. 创建环境并安装依赖
 
-## 使用方法
+macOS / Linux：
 
-1. 打开应用。
-2. 在上方“将 URL 输入⬇️”输入框中粘贴或输入网址。
-3. 点击“获取”，或在输入框里按回车。
-4. 在中央区域查看抓取结果。
-5. 切换“正文”“链接”“图片”“视频”“HTML预览”等标签页查看不同内容。
-6. 在链接、图片或视频列表中选中一条记录后，可以复制地址或打开地址；也可以点“复制全部”一次性复制该列表的所有地址。
-7. 在右侧媒体预览中点击图片或视频卡片，可以选择是否下载。
-8. 点击“保存”可以把当前抓取结果保存为 JSON 或 Markdown 文件（在保存对话框里选择类型或用对应后缀）。
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+```
 
-> 按钮行右侧的“遵守 robots.txt”默认勾选：若目标页面被 robots.txt 禁止，应用会提示并停止。取消勾选可强制抓取，请自行确保合规。
+Windows PowerShell：
 
-> 点击“原始响应”会在弹窗中显示目标服务器当前返回的状态行、响应头和原始正文——对依赖 JavaScript 渲染、正文提取很少的页面尤其有用。
+```powershell
+py -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
 
-## 输出内容
+### 3. 启动
 
-应用会尽量提取以下信息：
+```bash
+python crawler_app.py
+```
 
-- 请求地址和最终跳转地址。
-- HTTP 状态码和响应说明。
-- Content-Type 和页面编码。
-- 页面标题。
-- meta description 或 Open Graph description。
-- 页面标题结构，包含 H1 到 H6。
-- 页面可读正文。
-- 页面中的链接。
-- 页面中的图片地址，包括 img 标签、srcset 和常见图片 meta 信息。
-- 页面中的视频地址，包括 video/source 标签、常见视频 meta 信息和直接指向视频文件的链接。
-- HTML 预览内容。
-- 抓取时间、读取大小和是否截断。
+要求 Python 3.10 或更高版本，并且 Python 构建中包含 `tkinter`。Pillow 用于 JPEG、WebP 等图片缩略图；抓取和解析核心只使用 Python 标准库。
 
-## 保存结果格式
+## 使用流程
 
-保存功能默认生成一个 JSON 文件（也可在对话框中选择 `.md`，导出一份可读的 Markdown 摘要）。JSON 结构大致如下：
+1. 在“目标网址”输入框粘贴 URL。
+2. 保持“遵守 robots.txt”勾选，点击“获取”或按 `Command/Ctrl + Enter`。
+3. 在“概览”确认状态、最终地址、编码和页面结构。
+4. 在“页面情报”查看 SEO 分数、元数据、联系方式、表单和资源诊断。
+5. 在正文、链接、图片和视频工作区中搜索或检查结果。
+6. 多选图片或视频后点击“批量下载”，选择目标文件夹。
+7. 点击“导出报告”，通过文件后缀或文件类型选择 JSON、Markdown、HTML 或 CSV。
+
+常用快捷操作：
+
+| 操作 | macOS | Windows / Linux |
+| --- | --- | --- |
+| 定位并选中 URL | `Command + L` | `Ctrl + L` |
+| 开始获取 | `Command + Enter` | `Ctrl + Enter` |
+| 导出报告 | `Command + S` | `Ctrl + S` |
+
+## 导出格式
+
+| 格式 | 用途 | 内容 |
+| --- | --- | --- |
+| JSON | 程序处理、归档 | 完整 `CrawlResult` 结构 |
+| Markdown | 笔记、Issue、知识库 | 摘要、情报、标题、资源与正文 |
+| HTML | 浏览器阅读、发送报告 | 响应式指标、SEO 建议、媒体与链接表格 |
+| CSV | Excel、资源盘点 | 摘要、链接、图片、视频、表单和页面资源 |
+
+JSON 中除基础字段外，还包含以下分析结果：
 
 ```json
 {
-  "requested_url": "https://example.com",
-  "final_url": "https://example.com",
-  "status_code": 200,
-  "reason": "OK",
-  "content_type": "text/html; charset=utf-8",
-  "encoding": "utf-8",
-  "title": "Example Domain",
-  "description": "",
-  "headings": [],
-  "links": [],
-  "images": [],
-  "videos": [],
-  "text": "...",
-  "html_preview": "...",
-  "bytes_read": 1256,
-  "truncated": false,
-  "fetched_at": "2026-05-08 11:00:00"
+  "word_count": 680,
+  "reading_minutes": 3,
+  "page_info": {
+    "domain": "example.com",
+    "language": "zh-CN",
+    "canonical": "https://example.com/page"
+  },
+  "link_stats": {
+    "total": 24,
+    "internal": 18,
+    "external": 6,
+    "https": 24,
+    "http": 0
+  },
+  "contacts": {"emails": [], "phones": []},
+  "forms": [],
+  "resources": {"scripts": [], "stylesheets": [], "iframes": []},
+  "seo_report": {"score": 88, "grade": "优秀", "issues": [], "checks": []}
 }
 ```
 
-## 项目文件
+## macOS 无法打开时
+
+本项目的公开构建目前未使用 Apple Developer ID 签名，因此 Gatekeeper 可能阻止第一次启动。
+
+1. 确认已经完整解压 ZIP，不要直接在压缩包预览中运行。
+2. 右键 `WebCrawler.app`，选择“打开”，再在系统对话框中确认。
+3. 仍被拦截时，打开“系统设置 > 隐私与安全性”，在安全提示旁选择“仍要打开”。
+4. 也可以从源码运行 `python crawler_app.py`，用来区分 Gatekeeper 与程序本身的问题。
+
+请只运行从本仓库 Release 下载并核对过 SHA-256 的安装包。
+
+## 抓取范围与限制
+
+- 应用一次只抓取用户输入的单个页面，不递归遍历整个网站。
+- 默认检查并遵守目标站点的 `robots.txt`；关闭此选项前请确认你有权抓取。
+- 抓取的是服务器返回的 HTML，不执行网页 JavaScript。依赖客户端渲染的正文或媒体可能无法出现。
+- 受登录、验证码、地区限制、DRM 或临时签名保护的资源可能无法获取或下载。
+- 部分媒体地址是播放器页面而非可直接保存的视频文件。
+- 请遵守目标网站服务条款、版权要求、隐私规定和当地法律，不要进行高频请求。
+
+## 项目结构
 
 ```text
 .
-├── crawler_app.py          # 桌面界面（tkinter）
-├── crawler_core.py         # 抓取与解析核心（无界面依赖，可单独测试）
-├── tests/                  # pytest 单元测试
-├── conftest.py             # 让 tests 能导入 crawler_core
-├── requirements-dev.txt    # 开发依赖（仅 pytest）
-├── run_crawler.command     # macOS 备用启动脚本
-├── crawler_app.spec        # PyInstaller 打包配置
-├── .github/workflows/      # GitHub Actions：打 tag 自动构建 macOS/Windows 安装包
-├── README.md               # 项目说明
-├── LICENSE                 # MIT License
-└── .gitignore              # Git 忽略规则
+├── crawler_app.py             # tkinter 桌面界面与应用工作流
+├── crawler_core.py            # 抓取、解析、分析与报告生成
+├── workspace_store.py         # 本地历史记录持久化
+├── crawler_app.spec           # macOS PyInstaller 应用配置
+├── run_crawler.command        # macOS 源码备用启动器
+├── requirements.txt           # 运行依赖
+├── requirements-dev.txt       # 测试依赖
+├── tests/                     # 离线单元测试与 GUI 冒烟测试
+├── .github/workflows/         # 持续测试与跨平台发布构建
+├── CHANGELOG.md               # 版本变更记录
+└── LICENSE                    # MIT License
 ```
 
-## 开发说明
+核心层没有 `tkinter` 依赖，可以单独导入并用于脚本：
 
-项目分成两个文件，职责清晰：
+```python
+from crawler_core import fetch_url, result_to_markdown
 
-- `crawler_core.py`：抓取与解析核心。使用 `urllib.request` 获取网页，使用 `html.parser.HTMLParser` 提取标题、描述、正文、链接、图片和视频。没有任何界面依赖，可以脱离窗口单独测试或复用。
-- `crawler_app.py`：桌面界面。使用 `tkinter` 构建窗口、输入框、按钮、标签页和结果展示区域，并调用 `crawler_core` 完成抓取。
+result = fetch_url("https://example.com")
+print(result.title)
+print(result_to_markdown(result))
+```
 
-为了保持项目轻量，当前版本没有引入第三方 HTML 解析库。对于复杂的现代网页，尤其是依赖 JavaScript 渲染内容的网站，应用只能抓取服务器返回的初始 HTML，无法执行页面脚本。
-
-## 运行测试
-
-核心逻辑由 pytest 单元测试覆盖，运行时不联网、也不会弹出窗口：
+## 开发与测试
 
 ```bash
-python3 -m pip install -r requirements-dev.txt
-python3 -m pytest
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
+python -m py_compile crawler_app.py crawler_core.py workspace_store.py
 ```
 
-## 打包说明
+测试不会访问互联网。网络行为通过 mock 验证；GUI 冒烟测试在没有显示器的 CI 环境中会自动跳过窗口实现部分。
 
-如果希望重新生成 macOS 可执行应用，可以使用 PyInstaller：
+## 本地打包
 
 ```bash
-python3 -m pip install pyinstaller
-pyinstaller --noconfirm crawler_app.spec
+python -m pip install -r requirements-dev.txt pyinstaller
+pyinstaller --clean --noconfirm crawler_app.spec
 ```
 
-打包结果会生成在 `dist/` 目录中。`dist/` 和 `build/` 属于生成文件，默认不会提交到 Git。
+macOS 应用会生成在 `dist/WebCrawler.app`。Windows 发布包由 GitHub Actions 使用 `--onefile --windowed` 构建。
 
-发布带下载包的版本：推送一个 `v` 开头的标签，即可触发 GitHub Actions 在 macOS 与 Windows 上分别构建，并发布到对应的 GitHub Release：
+发布新版本时，在 `main` 上创建并推送版本标签：
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v2.0.0
+git push origin v2.0.0
 ```
 
-也可以在 GitHub 仓库的 Actions 页面手动运行 “Build release packages”。
-
-## 注意事项
-
-- 应用默认会检查并遵守目标网站的 robots.txt；若手动关闭，请自行确保抓取行为符合其服务条款和当地法律法规。
-- 不要对同一网站进行高频请求。
-- 当前应用只抓取单个页面，不做递归深度爬取。
-- 某些网站可能会拒绝自动化请求，或返回与浏览器不同的内容。
-- 依赖 JavaScript 渲染的内容可能无法被提取。
+也可以在 GitHub Actions 页面手动运行 `Build release packages`，此时安装包会作为工作流 Artifact 保存，但不会自动创建 Release。
 
 ## License
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+本项目使用 [MIT License](LICENSE)。Copyright (c) 2026 Tride。
