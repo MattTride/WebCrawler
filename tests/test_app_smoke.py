@@ -24,6 +24,7 @@ def test_app_constructs_and_realizes(tmp_path):
         assert "页面情报" in app.pages
         assert "历史记录" in app.pages
         assert "SEO" in app.metrics
+        assert crawler_app.APP_VERSION == "2.0.0"
 
         app.fill_list("链接", [{"text": "a", "url": "u1"}, {"text": "b", "url": "u2"}])
         assert app.all_urls("链接") == ["u1", "u2"]

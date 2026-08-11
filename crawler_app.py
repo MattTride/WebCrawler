@@ -30,6 +30,8 @@ from crawler_core import (
 from workspace_store import HistoryStore
 
 APP_NAME = "网页爬虫小程序"
+APP_VERSION = "2.0.0"
+PROJECT_URL = "https://github.com/MattTride/WebCrawler"
 
 
 class CrawlerApp(tk.Frame):
@@ -71,6 +73,11 @@ class CrawlerApp(tk.Frame):
         root.geometry("1440x900")
         root.minsize(1120, 720)
         root.configure(bg=self.C["bg"])
+        try:
+            root.tk.call("tk", "appname", "Crawl Studio")
+        except tk.TclError:
+            pass
+        self.configure_menus()
         self.pack(fill="both", expand=True)
         self.build()
         self.poll()
@@ -88,6 +95,54 @@ class CrawlerApp(tk.Frame):
                          disabledforeground=self.C["muted"],
                          cursor="hand2", highlightthickness=1,
                          highlightbackground=self.C["accent_dark"] if primary else self.C["line"])
+
+    def configure_menus(self):
+        menubar = tk.Menu(self.root)
+        modifier = "Command" if self.root.tk.call("tk", "windowingsystem") == "aqua" else "Control"
+        accelerator = "⌘" if modifier == "Command" else "Ctrl+"
+
+        file_menu = tk.Menu(menubar, tearoff=False)
+        file_menu.add_command(label="定位网址", accelerator=f"{accelerator}L", command=self.focus_url)
+        file_menu.add_command(label="获取网页", accelerator=f"{accelerator}↩", command=self.start_fetch)
+        file_menu.add_separator()
+        file_menu.add_command(label="导出报告", accelerator=f"{accelerator}S", command=self.save_results)
+        file_menu.add_command(label="查看原始响应", command=self.show_raw_response)
+        file_menu.add_separator()
+        file_menu.add_command(label="退出", command=self.root.destroy)
+        menubar.add_cascade(label="文件", menu=file_menu)
+
+        view_menu = tk.Menu(menubar, tearoff=False)
+        for name in ("概览", "页面情报", "正文", "链接", "图片", "视频", "HTML预览", "历史记录"):
+            view_menu.add_command(label=name, command=lambda n=name: self.show(n))
+        menubar.add_cascade(label="视图", menu=view_menu)
+
+        help_menu = tk.Menu(menubar, tearoff=False)
+        help_menu.add_command(label="项目主页", command=lambda: webbrowser.open(PROJECT_URL))
+        help_menu.add_command(label="关于 Crawl Studio", command=self.show_about)
+        menubar.add_cascade(label="帮助", menu=help_menu)
+        self.root.configure(menu=menubar)
+
+        self.root.bind_all(f"<{modifier}-l>", self.focus_url)
+        self.root.bind_all(f"<{modifier}-Return>", self.key_fetch)
+        self.root.bind_all(f"<{modifier}-s>", self.shortcut_export)
+
+    def focus_url(self, _event=None):
+        self.clear_placeholder()
+        self.url.focus_set()
+        self.url.tag_add(tk.SEL, "1.0", "end-1c")
+        return "break"
+
+    def shortcut_export(self, _event=None):
+        self.save_results()
+        return "break"
+
+    def show_about(self):
+        messagebox.showinfo(
+            "关于 Crawl Studio",
+            f"Crawl Studio {APP_VERSION}\n\n"
+            "单页网页采集、页面情报、媒体提取与结构化报告工作台。\n\n"
+            "MIT License · MattTride/WebCrawler",
+        )
 
     def build(self):
         self.sidebar()
