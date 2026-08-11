@@ -24,6 +24,7 @@ from crawler_core import (
     result_to_markdown,
     safe_filename_from_url,
 )
+from workspace_store import HistoryStore
 
 APP_NAME = "网页爬虫小程序"
 
@@ -45,12 +46,15 @@ class CrawlerApp(tk.Frame):
         "图片": "图片资源、替代文本与下载入口",
         "视频": "视频源、播放器资源与下载入口",
         "HTML预览": "服务器返回的原始 HTML 片段",
+        "历史记录": "保存在本机的最近抓取任务，可快速再次运行",
     }
 
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root: tk.Tk, history_path: Path | None = None):
         super().__init__(root, bg=self.C["bg"])
         self.root, self.q, self.result = root, queue.Queue(), None
         self.pages, self.tabs, self.lists = {}, {}, {}
+        self.history_store = HistoryStore(history_path)
+        self.history_items: list[dict[str, object]] = []
         self.link_items, self.image_items, self.video_items, self.placeholder = [], [], [], True
         self.preview_slots, self.preview_photos, self.preview_generation = {}, [], 0
         self.status = tk.StringVar(value="等待 URL")
@@ -97,7 +101,7 @@ class CrawlerApp(tk.Frame):
         self.label(brand, "网页采集与内容分析工作台", size=10, fg="#AEB7B0", bg=self.C["side"]).pack(anchor="w", pady=(5, 0))
 
         self.label(side, "工作区", size=10, weight="bold", fg="#8F9A92", bg=self.C["side"]).pack(anchor="w", padx=20, pady=(0, 8))
-        for name in ("概览", "页面情报", "正文", "链接", "图片", "视频", "HTML预览"):
+        for name in ("概览", "页面情报", "正文", "链接", "图片", "视频", "HTML预览", "历史记录"):
             btn = tk.Label(
                 side, text=name, anchor="w", padx=18, pady=11,
                 bg=self.C["side"], fg=self.C["side_text"],
@@ -155,6 +159,7 @@ class CrawlerApp(tk.Frame):
         self.list_page("图片")
         self.list_page("视频")
         self.html = self.text_page("HTML预览")
+        self.history_page()
         self.set_text(self.summary, "准备好了。\n\n把网页 URL 粘贴到上方输入框，然后点击“获取”。")
         self.render_media_preview([], [])
         self.show("概览")
@@ -257,7 +262,33 @@ class CrawlerApp(tk.Frame):
         box.bind("<Double-Button-1>", lambda _e, n=name: self.open_url(n))
         self.pages[name], self.lists[name] = frame, box
 
+    def history_page(self):
+        frame = tk.Frame(self.holder, bg=self.C["panel"])
+        frame.grid_rowconfigure(1, weight=1)
+        frame.grid_columnconfigure(0, weight=1)
+        tools = tk.Frame(frame, bg=self.C["panel"])
+        tools.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        self.button(tools, "再次抓取", self.rerun_history, True).pack(side="left")
+        self.button(tools, "复制网址", self.copy_history_url).pack(side="left", padx=(8, 0))
+        self.button(tools, "删除记录", self.delete_history).pack(side="left", padx=(8, 0))
+        self.button(tools, "清空历史", self.clear_history).pack(side="left", padx=(8, 0))
+        self.label(tools, "任务摘要仅保存在本机", size=10, fg=self.C["muted"], bg=self.C["panel"]).pack(side="right", pady=9)
+
+        self.history_list = tk.Listbox(
+            frame, selectmode=tk.BROWSE, relief="flat", bd=0, font=("Helvetica", 13),
+            bg=self.C["alt"], fg=self.C["ink"], selectbackground=self.C["accent_soft"],
+        )
+        scroll = tk.Scrollbar(frame, orient="vertical", command=self.history_list.yview)
+        self.history_list.configure(yscrollcommand=scroll.set)
+        self.history_list.grid(row=1, column=0, sticky="nsew")
+        scroll.grid(row=1, column=1, sticky="ns")
+        self.history_list.bind("<Double-Button-1>", lambda _e: self.rerun_history())
+        self.pages["历史记录"] = frame
+        self.refresh_history()
+
     def show(self, name):
+        if name == "历史记录":
+            self.refresh_history()
         self.active_page = name
         for key, page in self.pages.items():
             page.pack_forget()
@@ -443,6 +474,11 @@ class CrawlerApp(tk.Frame):
         self.fill_list("图片", result.images)
         self.fill_list("视频", result.videos)
         self.render_media_preview(result.images, result.videos)
+        try:
+            self.history_store.add_result(result)
+            self.refresh_history()
+        except OSError:
+            self.status.set("抓取完成，历史保存失败")
         self.show("概览")
 
     def show_error(self, message: str):
@@ -544,6 +580,65 @@ class CrawlerApp(tk.Frame):
         if not issues:
             lines.append("当前基础 SEO 检查全部通过。")
         return "\n".join(lines)
+
+    def refresh_history(self):
+        self.history_items = self.history_store.list_entries()
+        self.history_list.delete(0, tk.END)
+        if not self.history_items:
+            self.history_list.insert(tk.END, "暂无历史记录。完成一次抓取后会显示在这里。")
+            return
+        for entry in self.history_items:
+            title = self.shorten(str(entry.get("title") or "未发现标题"), 42)
+            url = self.shorten(str(entry.get("final_url") or entry.get("requested_url") or ""), 68)
+            status = entry.get("status_code") or "--"
+            score = entry.get("seo_score", 0)
+            fetched_at = entry.get("fetched_at", "")
+            self.history_list.insert(
+                tk.END,
+                f"{fetched_at}    {status}    SEO {score}    {title}    {url}",
+            )
+
+    def selected_history(self):
+        selection = self.history_list.curselection()
+        if not selection or not self.history_items:
+            return None
+        index = selection[0]
+        return self.history_items[index] if index < len(self.history_items) else None
+
+    def rerun_history(self):
+        entry = self.selected_history()
+        if not entry:
+            messagebox.showinfo(APP_NAME, "请先选择一条历史记录。")
+            return
+        self.write_url(str(entry.get("final_url") or entry.get("requested_url") or ""))
+        self.start_fetch()
+
+    def copy_history_url(self):
+        entry = self.selected_history()
+        if not entry:
+            messagebox.showinfo(APP_NAME, "请先选择一条历史记录。")
+            return
+        url = str(entry.get("final_url") or entry.get("requested_url") or "")
+        self.root.clipboard_clear()
+        self.root.clipboard_append(url)
+        self.status.set("已复制历史网址")
+
+    def delete_history(self):
+        entry = self.selected_history()
+        if not entry:
+            messagebox.showinfo(APP_NAME, "请先选择一条历史记录。")
+            return
+        self.history_store.delete(str(entry.get("id", "")))
+        self.refresh_history()
+        self.status.set("历史记录已删除")
+
+    def clear_history(self):
+        if not self.history_items:
+            return
+        if messagebox.askyesno(APP_NAME, "确定清空全部本地历史记录吗？"):
+            self.history_store.clear()
+            self.refresh_history()
+            self.status.set("历史记录已清空")
 
     def render_media_preview(self, images, videos):
         self.preview_generation += 1

@@ -11,17 +11,18 @@ tk = pytest.importorskip("tkinter")
 import crawler_app
 
 
-def test_app_constructs_and_realizes():
+def test_app_constructs_and_realizes(tmp_path):
     try:
         root = tk.Tk()
     except tk.TclError:
         pytest.skip("no display available")
     root.withdraw()
     try:
-        app = crawler_app.CrawlerApp(root)
+        app = crawler_app.CrawlerApp(root, history_path=tmp_path / "history.json")
         root.update()  # force every widget to realize
         assert app.respect_robots.get() is True
         assert "页面情报" in app.pages
+        assert "历史记录" in app.pages
         assert "SEO" in app.metrics
 
         app.fill_list("链接", [{"text": "a", "url": "u1"}, {"text": "b", "url": "u2"}])
