@@ -5,6 +5,9 @@ Pure logic with no tkinter dependency, so it can be unit-tested and reused
 """
 from __future__ import annotations
 
+import csv
+import html as html_lib
+import io
 import re
 import time
 import urllib.error
@@ -197,6 +200,107 @@ def result_to_markdown(result: CrawlResult) -> str:
     if result.text:
         lines += ["## 正文", "", result.text, ""]
     return "\n".join(lines).rstrip() + "\n"
+
+
+def result_to_csv(result: CrawlResult) -> str:
+    """Render page metadata and discovered resources as a flat CSV manifest."""
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(["category", "index", "label", "url_or_value", "details"])
+    summary = [
+        ("title", result.title),
+        ("description", result.description),
+        ("requested_url", result.requested_url),
+        ("final_url", result.final_url),
+        ("status", result.status_code),
+        ("word_count", result.word_count),
+        ("seo_score", result.seo_report.get("score", 0)),
+    ]
+    for index, (label, value) in enumerate(summary, 1):
+        writer.writerow(["summary", index, label, value, ""])
+    for index, item in enumerate(result.links, 1):
+        writer.writerow(["link", index, item.get("text", ""), item.get("url", ""), ""])
+    for index, item in enumerate(result.images, 1):
+        writer.writerow(["image", index, item.get("alt", ""), item.get("src", ""), ""])
+    for index, item in enumerate(result.videos, 1):
+        writer.writerow(["video", index, item.get("text", ""), item.get("url", ""), ""])
+    for index, item in enumerate(result.forms, 1):
+        details = f"method={item.get('method', 'GET')}; inputs={item.get('inputs', 0)}; passwords={item.get('password_fields', 0)}"
+        writer.writerow(["form", index, f"Form {index}", item.get("action", ""), details])
+    for kind, values in result.resources.items():
+        for index, value in enumerate(values, 1):
+            writer.writerow([kind.rstrip("s"), index, kind, value, ""])
+    return output.getvalue()
+
+
+def result_to_html(result: CrawlResult) -> str:
+    """Render a self-contained, browser-friendly crawl report."""
+    esc = lambda value: html_lib.escape(str(value or ""), quote=True)
+    seo = result.seo_report or {}
+    issue_items = "".join(f"<li>{esc(issue)}</li>" for issue in seo.get("issues", [])) or "<li>基础 SEO 检查全部通过。</li>"
+    heading_rows = "".join(
+        f"<tr><td>{esc(item.get('level'))}</td><td>{esc(item.get('text'))}</td></tr>"
+        for item in result.headings
+    ) or '<tr><td colspan="2">未发现标题结构</td></tr>'
+    link_rows = "".join(
+        f'<tr><td>{esc(item.get("text"))}</td><td><a href="{esc(item.get("url"))}">{esc(item.get("url"))}</a></td></tr>'
+        for item in result.links
+    ) or '<tr><td colspan="2">未发现链接</td></tr>'
+    media_cards = "".join(
+        f'<article class="media"><img loading="lazy" src="{esc(item.get("src"))}" alt="{esc(item.get("alt"))}"><strong>{esc(item.get("alt") or "图片")}</strong><a href="{esc(item.get("src"))}">{esc(item.get("src"))}</a></article>'
+        for item in result.images
+    )
+    media_cards += "".join(
+        f'<article class="media video"><strong>{esc(item.get("text") or "视频")}</strong><a href="{esc(item.get("url"))}">{esc(item.get("url"))}</a></article>'
+        for item in result.videos
+    )
+    if not media_cards:
+        media_cards = '<p class="muted">未发现媒体资源。</p>'
+    info_rows = "".join(
+        f"<tr><td>{esc(key)}</td><td>{esc(value or '未声明')}</td></tr>"
+        for key, value in result.page_info.items()
+    )
+    body_text = esc(result.text).replace("\n", "<br>") or "未提取到可读正文。"
+    status = f"{result.status_code or ''} {result.reason}".strip() or "无状态码"
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{esc(result.title)} - Crawl Studio</title>
+<style>
+:root{{--ink:#202521;--muted:#68716b;--line:#d9dedb;--panel:#fff;--bg:#f1f3f2;--accent:#d36b47;--green:#2f6b57}}
+*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}}
+main{{width:min(1180px,calc(100% - 32px));margin:32px auto}}header{{padding:28px;background:#252925;color:#fff;border-bottom:5px solid var(--accent)}}
+h1,h2{{margin:0 0 8px}}h2{{font-size:20px}}.subtitle,.muted{{color:var(--muted)}}header .subtitle{{color:#c5cec7}}
+.metrics{{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin:16px 0}}.metric,section{{background:var(--panel);border:1px solid var(--line)}}
+.metric{{padding:14px}}.metric span{{display:block;color:var(--muted);font-size:12px}}.metric strong{{font-size:21px}}section{{padding:22px;margin:12px 0}}
+.grid{{display:grid;grid-template-columns:1fr 1fr;gap:12px}}table{{width:100%;border-collapse:collapse}}td,th{{padding:9px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}}
+a{{color:#315f70;overflow-wrap:anywhere}}.media-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}}.media{{border:1px solid var(--line);padding:10px;overflow:hidden}}
+.media img{{display:block;width:100%;height:150px;object-fit:contain;background:#f7f8f7;margin-bottom:8px}}.media strong,.media a{{display:block}}.body{{white-space:normal;overflow-wrap:anywhere}}
+@media(max-width:760px){{.metrics{{grid-template-columns:repeat(2,1fr)}}.grid{{grid-template-columns:1fr}}main{{margin:16px auto}}}}
+</style>
+</head>
+<body><main>
+<header><h1>{esc(result.title)}</h1><div class="subtitle">{esc(result.description or result.final_url)}</div></header>
+<div class="metrics">
+<div class="metric"><span>状态</span><strong>{esc(status)}</strong></div>
+<div class="metric"><span>SEO</span><strong>{esc(seo.get('score', 0))}/100</strong></div>
+<div class="metric"><span>链接</span><strong>{len(result.links)}</strong></div>
+<div class="metric"><span>图片</span><strong>{len(result.images)}</strong></div>
+<div class="metric"><span>视频</span><strong>{len(result.videos)}</strong></div>
+<div class="metric"><span>正文字数</span><strong>{result.word_count}</strong></div>
+</div>
+<div class="grid">
+<section><h2>页面信息</h2><table>{info_rows}</table></section>
+<section><h2>SEO 建议</h2><p><strong>{esc(seo.get('grade', '未评级'))}</strong></p><ul>{issue_items}</ul></section>
+</div>
+<section><h2>标题结构</h2><table><thead><tr><th>级别</th><th>内容</th></tr></thead><tbody>{heading_rows}</tbody></table></section>
+<section><h2>媒体资源</h2><div class="media-grid">{media_cards}</div></section>
+<section><h2>链接</h2><table><thead><tr><th>文字</th><th>地址</th></tr></thead><tbody>{link_rows}</tbody></table></section>
+<section><h2>正文</h2><div class="body">{body_text}</div></section>
+<p class="muted">由 Crawl Studio 于 {esc(result.fetched_at)} 生成 · {esc(result.final_url)}</p>
+</main></body></html>"""
 
 
 class PageParser(HTMLParser):

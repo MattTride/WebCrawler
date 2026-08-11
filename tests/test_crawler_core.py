@@ -1,4 +1,6 @@
 """Unit tests for crawler_core: the tkinter-free fetch/parse logic."""
+import csv
+import io
 import urllib.error
 
 import pytest
@@ -345,6 +347,43 @@ def test_result_to_markdown_renders_sections():
     assert "## 正文" in md and "Body text here." in md
     assert "SEO 健康度：88 / 100" in md
     assert "正文字数：3" in md
+
+
+def test_result_to_html_escapes_content_and_renders_report():
+    result = crawler_core.CrawlResult(
+        requested_url="https://example.com", final_url="https://example.com",
+        status_code=200, reason="OK", content_type="text/html", encoding="utf-8",
+        title="A <Title>", description="Description & details", headings=[],
+        links=[{"text": "Docs", "url": "https://example.com/?a=1&b=2"}],
+        images=[{"alt": "Cover", "src": "https://example.com/cover.jpg"}],
+        videos=[], text="Body <script>alert(1)</script>", html_preview="", bytes_read=1,
+        truncated=False, fetched_at="2026-08-11", word_count=2,
+        page_info={"domain": "example.com"}, seo_report={"score": 75, "grade": "良好", "issues": ["补充描述"]},
+    )
+    report = crawler_core.result_to_html(result)
+    assert "<!doctype html>" in report
+    assert "A &lt;Title&gt;" in report
+    assert "<script>alert(1)</script>" not in report
+    assert "Body &lt;script&gt;alert(1)&lt;/script&gt;" in report
+    assert "75/100" in report
+
+
+def test_result_to_csv_writes_resource_manifest():
+    result = crawler_core.CrawlResult(
+        requested_url="https://example.com", final_url="https://example.com",
+        status_code=200, reason="OK", content_type="text/html", encoding="utf-8",
+        title="Page, with comma", description="", headings=[],
+        links=[{"text": "Home", "url": "https://example.com/home"}],
+        images=[], videos=[], text="", html_preview="", bytes_read=1,
+        truncated=False, fetched_at="2026-08-11",
+        forms=[{"action": "https://example.com/login", "method": "POST", "inputs": 2, "password_fields": 1}],
+        resources={"scripts": ["https://example.com/app.js"]},
+    )
+    rows = list(csv.reader(io.StringIO(crawler_core.result_to_csv(result))))
+    assert rows[0] == ["category", "index", "label", "url_or_value", "details"]
+    assert ["link", "1", "Home", "https://example.com/home", ""] in rows
+    assert any(row[0] == "form" and row[3].endswith("/login") for row in rows)
+    assert any(row[0] == "script" and row[3].endswith("app.js") for row in rows)
 
 
 # --- raw server response ---------------------------------------------------

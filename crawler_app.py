@@ -22,6 +22,8 @@ from crawler_core import (
     fetch_raw_response,
     fetch_url,
     normalize_url,
+    result_to_csv,
+    result_to_html,
     result_to_markdown,
     safe_filename_from_url,
 )
@@ -191,7 +193,7 @@ class CrawlerApp(tk.Frame):
         self.fetch_btn.pack(side="left", ipadx=28)
         self.clear_btn = self.button(row, "清空", self.clear_results)
         self.clear_btn.pack(side="left", padx=(10, 0))
-        self.save_btn = self.button(row, "保存", self.save_results)
+        self.save_btn = self.button(row, "导出报告", self.save_results)
         self.save_btn.configure(state=tk.DISABLED)
         self.save_btn.pack(side="left", padx=(10, 0))
         self.raw_btn = self.button(row, "原始响应", self.show_raw_response)
@@ -964,15 +966,33 @@ class CrawlerApp(tk.Frame):
             initialdir=str(self.default_save_dir()),
             initialfile=f"crawler-result-{time.strftime('%Y%m%d-%H%M%S')}.json",
             defaultextension=".json",
-            filetypes=(("JSON 文件", "*.json"), ("Markdown 文件", "*.md"), ("所有文件", "*.*")),
+            filetypes=(
+                ("JSON 数据", "*.json"),
+                ("Markdown 报告", "*.md"),
+                ("HTML 报告", "*.html"),
+                ("CSV 资源清单", "*.csv"),
+                ("所有文件", "*.*"),
+            ),
         )
         if path:
-            if path.lower().endswith(".md"):
-                Path(path).write_text(result_to_markdown(self.result), encoding="utf-8")
-            else:
-                Path(path).write_text(json.dumps(self.result.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
-            self.status.set("结果已保存")
-            messagebox.showinfo(APP_NAME, "抓取结果已保存。")
+            try:
+                suffix = Path(path).suffix.lower()
+                if suffix == ".md":
+                    content, encoding = result_to_markdown(self.result), "utf-8"
+                elif suffix in {".html", ".htm"}:
+                    content, encoding = result_to_html(self.result), "utf-8"
+                elif suffix == ".csv":
+                    content, encoding = result_to_csv(self.result), "utf-8-sig"
+                else:
+                    content = json.dumps(self.result.to_dict(), ensure_ascii=False, indent=2)
+                    encoding = "utf-8"
+                Path(path).write_text(content, encoding=encoding)
+            except OSError as err:
+                self.status.set("导出失败")
+                messagebox.showerror(APP_NAME, f"导出报告失败：\n{err}")
+                return
+            self.status.set("报告已导出")
+            messagebox.showinfo(APP_NAME, "抓取报告已导出。")
 
 
 def main():
